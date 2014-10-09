@@ -4,6 +4,7 @@ use std::collections::{HashSet};
 use std::c_str::CString;
 use std::io::{IoError, IoResult};
 use std::io::{BufferedReader, File, Open, ReadWrite};
+use std::io::fs::PathExtensions;
 use std::mem::{transmute};
 use std::ptr;
 use std::raw::Slice;
