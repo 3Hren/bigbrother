@@ -224,8 +224,8 @@ impl Watcher {
         let (mut tx, rx) = channel::<(Event, String)>();
         let (ctx, crx) = sync_channel::<Control>(0);
 
-        let eventloop = Arc::new(Mutex::new(ptr::mut_null::<c_void>()));
-        let stream = Arc::new(Mutex::new(ptr::mut_null::<c_void>()));
+        let eventloop = Arc::new(Mutex::new(ptr::null_mut::<c_void>()));
+        let stream = Arc::new(Mutex::new(ptr::null_mut::<c_void>()));
 
         let watcher = Watcher {
             rx: rx,
