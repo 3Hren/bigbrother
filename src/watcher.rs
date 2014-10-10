@@ -3,7 +3,6 @@
 use std::collections::{HashSet};
 use std::c_str::CString;
 use std::io::{IoError, IoResult};
-use std::io::{BufferedReader, File, Open, ReadWrite};
 use std::io::fs::PathExtensions;
 use std::mem::{transmute};
 use std::ptr;
@@ -20,6 +19,7 @@ enum CFStringBuiltInEncodings {
     kCFStringEncodingUTF8    = 0x08000100,
 }
 
+#[deriving(Show)]
 pub enum Event {
     Created,
     Removed,
@@ -342,29 +342,47 @@ extern {
     fn CFRelease(p: *const c_void);
 }
 
-#[test]
-fn main() {
-    let path = Path::new("/tmp/logstash.log");
-    let mut watcher = Watcher::new();
-    watcher.watch(&path).unwrap();
-//    watcher.watch(Path::new("/Users/esafronov/sandbox")).unwrap();
+//#[test]
+//fn main() {
+//    let path = Path::new("/tmp/");
+//    let mut watcher = Watcher::new();
+//    watcher.watch(&path).unwrap();
+////    watcher.watch(Path::new("/Users/esafronov/sandbox")).unwrap();
 
-    let file = match File::open_mode(&path, Open, ReadWrite) {
-        Ok(f) => f,
-        Err(e) => fail!("file error: {}", e),
-    };
-    let mut reader = BufferedReader::new(file);
-    loop {
-        for line in reader.lines() {
-            debug!("{}", line.unwrap());
-        }
+//    loop {
+//        match watcher.rx.recv() {
+//            (Created, path)  => { debug!("received create event: {}", path); }
+//            (Removed, path)  => { debug!("received remove event: {}", path); }
+//            (Modified, path) => { debug!("received modify event: {}", path); }
+//            (RenamedOld, path) => { debug!("received renamed old event: {}", path); }
+//            (RenamedNew, path) => { debug!("received renamed new event: {}", path); }
+//        }
+//    }
+//}
+
+#[cfg(test)]
+mod test {
+    extern crate test;
+
+    use std::io::{File, TempDir};
+
+    use super::Watcher;
+    use super::{Created};
+
+    #[test]
+    fn create_file() {
+        let tempdir = TempDir::new("").unwrap();
+        let mut path = tempdir.path().clone();
+        path.push(Path::new("file.log"));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tempdir.path()).unwrap();
+
+        File::create(&path).unwrap();
 
         match watcher.rx.recv() {
-            (Created, path)  => { debug!("received create event: {}", path); }
-            (Removed, path)  => { debug!("received remove event: {}", path); }
-            (Modified, path) => { debug!("received modify event: {}", path); }
-            (RenamedOld, path) => { debug!("received renamed old event: {}", path); }
-            (RenamedNew, path) => { debug!("received renamed new event: {}", path); }
+            (Created, p)   => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
+            (event @ _, _) => { fail!("expected Created event, actual: {}", event) }
         }
     }
 }
