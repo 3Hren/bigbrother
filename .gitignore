@@ -1,3 +1,8 @@
 
 target
 Cargo.lock
+bigbrother.config
+bigbrother.creator
+bigbrother.creator.user
+bigbrother.files
+bigbrother.includes
