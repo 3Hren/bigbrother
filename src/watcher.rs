@@ -342,24 +342,6 @@ extern {
     fn CFRelease(p: *const c_void);
 }
 
-//#[test]
-//fn main() {
-//    let path = Path::new("/tmp/");
-//    let mut watcher = Watcher::new();
-//    watcher.watch(&path).unwrap();
-////    watcher.watch(Path::new("/Users/esafronov/sandbox")).unwrap();
-
-//    loop {
-//        match watcher.rx.recv() {
-//            (Created, path)  => { debug!("received create event: {}", path); }
-//            (Removed, path)  => { debug!("received remove event: {}", path); }
-//            (Modified, path) => { debug!("received modify event: {}", path); }
-//            (RenamedOld, path) => { debug!("received renamed old event: {}", path); }
-//            (RenamedNew, path) => { debug!("received renamed new event: {}", path); }
-//        }
-//    }
-//}
-
 #[cfg(test)]
 mod test {
     extern crate test;
