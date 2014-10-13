@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types)] // C types
+#![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
 use std::collections::{HashSet};
 use std::c_str::CString;
@@ -8,6 +8,7 @@ use std::mem::{transmute};
 use std::ptr;
 use std::raw::Slice;
 use std::os;
+use std::io::fs;
 
 use libc::{c_void, c_char, c_int, ENOENT};
 
@@ -15,9 +16,12 @@ use sync::{Arc, Mutex};
 
 #[repr(C)]
 enum CFStringBuiltInEncodings {
-    kCFStringEncodingUnicode = 0x0100,
+    kCFStringEncodingUnicode = 0x01000000,
     kCFStringEncodingUTF8    = 0x08000100,
 }
+
+static kFSEventStreamCreateFlagNoDefer: u32    = 0x00000002;
+static kFSEventStreamCreateFlagFileEvents: u32 = 0x00000010;
 
 #[deriving(Show)]
 pub enum Event {
@@ -61,8 +65,10 @@ enum FSEventStreamEventFlags {
     kFSEventStreamEventFlagItemIsFile   = 0x00010000,
 }
 
+static kFSEventStreamEventIdSinceNow: u64 = 0xFFFFFFFFFFFFFFFF;
+
 extern "C"
-fn callback(stream: *const c_void,
+fn callback(_stream: *const c_void,
             info: *const c_void,
             size: c_int,
             paths: *const *const i8,
@@ -109,7 +115,15 @@ fn callback(stream: *const c_void,
             continue;
         }
 
-        if event & kFSEventStreamEventFlagItemCreated as u32 > 0 {
+        if event & kFSEventStreamEventFlagItemCreated as u32 == kFSEventStreamEventFlagItemCreated as u32 &&
+           event & kFSEventStreamEventFlagItemRemoved as u32 == kFSEventStreamEventFlagItemRemoved as u32
+        {
+            let p = Path::new(path.as_slice());
+            match fs::stat(&p) {
+                Ok(..) => { tx.send((Created, path)); }
+                Err(..) => { tx.send((Removed, path)); }
+            }
+        } else if event & kFSEventStreamEventFlagItemCreated as u32 == kFSEventStreamEventFlagItemCreated as u32 {
             tx.send((Created, path));
         } else if event & kFSEventStreamEventFlagItemRemoved as u32 > 0 {
             tx.send((Removed, path));
@@ -190,23 +204,22 @@ impl Drop for CoreFoundationArray {
 fn recreate_stream(eventloop: *mut c_void, context: *const FSEventStreamContext, paths: HashSet<String>) -> *mut c_void {
     let paths = CoreFoundationArray::new(&paths);
 
+    let latency = 0.1f64;
     let stream = unsafe {
         FSEventStreamCreate(
             kCFAllocatorDefault,
             callback,
             context,
             paths.d,
-            0xFFFFFFFFFFFFFFFFu64,
-            0.0f64,
-            0x00000010u32
+            kFSEventStreamEventIdSinceNow,
+            latency,
+            kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagFileEvents
         )
     };
 
     unsafe {
-        FSEventStreamRetain(stream);
         FSEventStreamScheduleWithRunLoop(stream, eventloop, kCFRunLoopDefaultMode);
         FSEventStreamStart(stream);
-        FSEventStreamFlushAsync(stream);
         stream
     }
 }
@@ -236,6 +249,7 @@ impl Watcher {
         };
 
         spawn(proc() {
+            debug!("starting watcher thread");
             unsafe {
                 *eventloop.lock() = CFRunLoopGetCurrent();
 
@@ -249,13 +263,17 @@ impl Watcher {
                 };
 
                 loop {
-                    debug!("recycle");
+                    debug!("new watcher loop iteration");
                     match crx.recv() {
                         Update(paths) => {
+                            debug!("updating watcher loop with {}", paths);
                             *stream.lock() = recreate_stream(*eventloop.lock(), &context, paths);
                             CFRunLoopRun();
                         }
-                        Exit => break
+                        Exit => {
+                            debug!("graceful shutdown");
+                            break
+                        }
                     }
                 }
             }
@@ -296,7 +314,6 @@ impl Watcher {
         if !(*stream).is_null() {
             unsafe {
                 FSEventStreamStop(*stream);
-                FSEventStreamUnscheduleFromRunLoop(*stream, *self.eventloop.lock(), kCFRunLoopDefaultMode);
                 FSEventStreamInvalidate(*stream);
                 FSEventStreamRelease(*stream);
                 CFRunLoopWakeUp(*self.eventloop.lock());
@@ -326,14 +343,11 @@ extern {
 
     fn FSEventStreamCreate(allocator: *mut c_void, cb: callback_t, context: *const FSEventStreamContext, paths: *const c_void, since: u64, latency: f64, flags: u32) -> *mut c_void;
 
-    fn FSEventStreamRetain(stream: *mut c_void);
     fn FSEventStreamScheduleWithRunLoop(stream: *mut c_void, eventloop: *mut c_void, mode: *mut c_void);
-    fn FSEventStreamUnscheduleFromRunLoop(stream: *mut c_void, eventloop: *mut c_void, mode: *mut c_void);
     fn FSEventStreamStart(stream: *mut c_void);
     fn FSEventStreamStop(stream: *mut c_void);
     fn FSEventStreamInvalidate(stream: *mut c_void);
     fn FSEventStreamRelease(stream: *mut c_void);
-    fn FSEventStreamFlushAsync(stream: *mut c_void);
 
     fn CFRunLoopGetCurrent() -> *mut c_void;
     fn CFRunLoopRun();
@@ -347,9 +361,13 @@ mod test {
     extern crate test;
 
     use std::io::{File, TempDir};
+    use std::io::fs;
+    use std::io::fs::PathExtensions;
+    use std::io::timer;
+    use std::time::duration::Duration;
 
     use super::Watcher;
-    use super::{Created};
+    use super::{Created, Removed};
 
     #[test]
     fn create_file() {
@@ -360,11 +378,37 @@ mod test {
         let mut watcher = Watcher::new();
         watcher.watch(tempdir.path()).unwrap();
 
+        timer::sleep(Duration::milliseconds(100i64));
+
         File::create(&path).unwrap();
 
         match watcher.rx.recv() {
             (Created, p)   => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
             (event @ _, _) => { fail!("expected Created event, actual: {}", event) }
+        }
+    }
+
+    #[test]
+    fn remove_file() {
+        let tempdir = TempDir::new("").unwrap();
+        let mut filepath = tempdir.path().clone();
+
+        filepath.push(Path::new("file.log"));
+
+        assert!(!filepath.exists());
+        File::create(&filepath).unwrap();
+
+        // Wait for file creating.
+        timer::sleep(Duration::milliseconds(100i64));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tempdir.path()).unwrap();
+
+        fs::unlink(&filepath).unwrap();
+
+        match watcher.rx.recv() {
+            (Removed, p)   => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
+            (event @ _, _) => { fail!("expected Removed event, actual: {}", event) }
         }
     }
 }
