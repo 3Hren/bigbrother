@@ -8,7 +8,6 @@ use std::mem::{transmute};
 use std::ptr;
 use std::raw::Slice;
 use std::os;
-use std::io::fs;
 
 use libc::{c_void, c_char, c_int, ENOENT};
 
@@ -25,12 +24,11 @@ static kFSEventStreamCreateFlagFileEvents: u32 = 0x00000010;
 
 #[deriving(Show)]
 pub enum Event {
-    Created,
-    Removed,
-    //ModifiedMeta,
-    Modified,
-    RenamedOld,
-    RenamedNew,
+    Create(String),
+    Remove(String),
+    //ModifyMeta,
+    Modify(String),
+    Rename(String, String),
 }
 
 enum Control {
@@ -67,6 +65,10 @@ enum FSEventStreamEventFlags {
 
 static kFSEventStreamEventIdSinceNow: u64 = 0xFFFFFFFFFFFFFFFF;
 
+fn has_flag(event: u32, expected: FSEventStreamEventFlags) -> bool {
+    event & expected as u32 == expected as u32
+}
+
 extern "C"
 fn callback(_stream: *const c_void,
             info: *const c_void,
@@ -75,8 +77,8 @@ fn callback(_stream: *const c_void,
             events: *const u32,
             ids: *const u64)
 {
-    let tx: &mut Sender<(Event, String)> = unsafe {
-        &mut *(info as *mut Sender<(Event, String)>)
+    let tx: &mut Sender<Event> = unsafe {
+        &mut *(info as *mut Sender<Event>)
     };
 
     let events: &[u32] = unsafe {
@@ -106,8 +108,9 @@ fn callback(_stream: *const c_void,
     }
 
     let mut renamed = false;
+    let mut oldname = String::new();
     for id in range(0, size as uint) {
-        debug!("event: {}, id: {}, path: {}", events[id], ids[id], paths_[id]);
+        debug!("Received filesystem event: [id: {}, ev: {}] from '{}'", ids[id], events[id], paths_[id]);
         let event = events[id];
         let path = String::from_str(paths_[id].as_str().unwrap());
 
@@ -115,27 +118,23 @@ fn callback(_stream: *const c_void,
             continue;
         }
 
-        if event & kFSEventStreamEventFlagItemCreated as u32 == kFSEventStreamEventFlagItemCreated as u32 &&
-           event & kFSEventStreamEventFlagItemRemoved as u32 == kFSEventStreamEventFlagItemRemoved as u32
-        {
-            let p = Path::new(path.as_slice());
-            match fs::stat(&p) {
-                Ok(..) => { tx.send((Created, path)); }
-                Err(..) => { tx.send((Removed, path)); }
-            }
-        } else if event & kFSEventStreamEventFlagItemCreated as u32 == kFSEventStreamEventFlagItemCreated as u32 {
-            tx.send((Created, path));
-        } else if event & kFSEventStreamEventFlagItemRemoved as u32 > 0 {
-            tx.send((Removed, path));
-        } else if event & kFSEventStreamEventFlagItemRenamed as u32 > 0 {
+        let path_ = Path::new(path.as_slice());
+        if has_flag(event, kFSEventStreamEventFlagItemCreated) && path_.exists() {
+            tx.send(Create(path.clone()));
+        }
+
+        if has_flag(event, kFSEventStreamEventFlagItemRemoved) && !path_.exists() {
+            tx.send(Remove(path.clone()));
+        }
+
+        if has_flag(event, kFSEventStreamEventFlagItemRenamed) {
             if renamed {
-                tx.send((RenamedNew, path));
+                tx.send(Rename(oldname.clone(), path));
+                oldname.clear();
             } else {
-                tx.send((RenamedOld, path));
+                oldname = path;
             }
             renamed = !renamed;
-        } else if event & kFSEventStreamEventFlagItemModified as u32 > 0 {
-            tx.send((Modified, path));
         }
     }
 }
@@ -204,7 +203,7 @@ impl Drop for CoreFoundationArray {
 fn recreate_stream(eventloop: *mut c_void, context: *const FSEventStreamContext, paths: HashSet<String>) -> *mut c_void {
     let paths = CoreFoundationArray::new(&paths);
 
-    let latency = 0.1f64;
+    let latency = 0.05f64;
     let stream = unsafe {
         FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -225,7 +224,7 @@ fn recreate_stream(eventloop: *mut c_void, context: *const FSEventStreamContext,
 }
 
 pub struct Watcher {
-    pub rx: Receiver<(Event, String)>,
+    pub rx: Receiver<Event>,
     ctx: SyncSender<Control>,
     paths: HashSet<String>,
     stream: Arc<Mutex<*mut c_void>>,
@@ -234,7 +233,7 @@ pub struct Watcher {
 
 impl Watcher {
     pub fn new() -> Watcher {
-        let (mut tx, rx) = channel::<(Event, String)>();
+        let (mut tx, rx) = channel::<Event>();
         let (ctx, crx) = sync_channel::<Control>(0);
 
         let eventloop = Arc::new(Mutex::new(ptr::null_mut::<c_void>()));
@@ -363,11 +362,9 @@ mod test {
     use std::io::{File, TempDir};
     use std::io::fs;
     use std::io::fs::PathExtensions;
-    use std::io::timer;
-    use std::time::duration::Duration;
 
     use super::Watcher;
-    use super::{Created, Removed};
+    use super::{Create, Remove, Rename};
 
     #[test]
     fn create_file() {
@@ -378,13 +375,11 @@ mod test {
         let mut watcher = Watcher::new();
         watcher.watch(tempdir.path()).unwrap();
 
-        timer::sleep(Duration::milliseconds(100i64));
-
         File::create(&path).unwrap();
 
         match watcher.rx.recv() {
-            (Created, p)   => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
-            (event @ _, _) => { fail!("expected Created event, actual: {}", event) }
+            Create(p) => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
+            event @ _ => { fail!("expected Create event, actual: {}", event) }
         }
     }
 
@@ -398,17 +393,39 @@ mod test {
         assert!(!filepath.exists());
         File::create(&filepath).unwrap();
 
-        // Wait for file creating.
-        timer::sleep(Duration::milliseconds(100i64));
-
         let mut watcher = Watcher::new();
         watcher.watch(tempdir.path()).unwrap();
 
         fs::unlink(&filepath).unwrap();
 
         match watcher.rx.recv() {
-            (Removed, p)   => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
-            (event @ _, _) => { fail!("expected Removed event, actual: {}", event) }
+            Remove(p) => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
+            event @ _  => { fail!("expected Remove event, actual: {}", event) }
+        }
+    }
+
+    #[test]
+    fn rename_file() {
+        let tempdir = TempDir::new("").unwrap();
+        let mut oldfilepath = tempdir.path().clone();
+        oldfilepath.push(Path::new("file-old.log"));
+
+        File::create(&oldfilepath).unwrap();
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tempdir.path()).unwrap();
+
+        let mut newfilepath = tempdir.path().clone();
+        newfilepath.push(Path::new("file-new.log"));
+
+        fs::rename(&oldfilepath, &newfilepath).unwrap();
+
+        match watcher.rx.recv() {
+            Rename(old, new) => {
+                assert_eq!(b"file-old.log", Path::new(old.as_slice()).filename().unwrap());
+                assert_eq!(b"file-new.log", Path::new(new.as_slice()).filename().unwrap());
+            }
+            event @ _ => { fail!("expected Rename event, actual: {}", event) }
         }
     }
 }
