@@ -1,7 +1,7 @@
 use std::collections::{HashSet, HashMap};
 use std::collections::hashmap::{Occupied, Vacant};
 use std::io::fs;
-use std::io::{FileStat, FilePermission, Timer};
+use std::io::{FileStat, Timer};
 use std::time::Duration;
 use std::io::fs::PathExtensions;
 
@@ -26,13 +26,13 @@ pub struct Watcher {
 }
 
 #[deriving(Clone)]
-struct CopyableFileStat {
+struct WatchedFileStat {
     path: Path,
-    size: u64,
-    perm: FilePermission,
-    created: u64,
+//    size: u64,
+//    perm: FilePermission,
+//    created: u64,
     modified: u64,
-    accessed: u64,
+//    accessed: u64,
 //    device: u64,
     inode: u64,
 //    rdev: u64,
@@ -45,15 +45,11 @@ struct CopyableFileStat {
 //    gen: u64,
 }
 
-impl CopyableFileStat {
-    fn new(path: Path, stat: &FileStat) -> CopyableFileStat {
-        CopyableFileStat {
+impl WatchedFileStat {
+    fn new(path: Path, stat: &FileStat) -> WatchedFileStat {
+        WatchedFileStat {
             path: path,
-            size: stat.size,
-            perm: stat.perm,
-            created: stat.created,
             modified: stat.modified,
-            accessed: stat.accessed,
             inode: stat.unstable.inode,
         }
     }
@@ -87,7 +83,7 @@ impl Watcher {
         let timeout = timer.periodic(period);
 
         let mut paths = HashSet::new();
-        let mut prev: HashMap<u64, CopyableFileStat> = HashMap::new();
+        let mut prev: HashMap<u64, WatchedFileStat> = HashMap::new();
         loop {
             debug!("Event loop tick ...");
 
@@ -116,6 +112,10 @@ impl Watcher {
                         if prevstat.path != stat.path {
                             tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
                         }
+
+                        if prevstat.modified != stat.modified {
+                            tx.send(Modify(stat.path.clone()));
+                        }
                     }
                 };
             }
@@ -141,14 +141,14 @@ impl Watcher {
     }
 
     //TODO: What to do if something failed?
-    fn rescan(paths: &HashSet<Path>) -> HashMap<u64, CopyableFileStat> {
+    fn rescan(paths: &HashSet<Path>) -> HashMap<u64, WatchedFileStat> {
         let mut stats = HashMap::new();
         for path in paths.iter() {
             debug!("Scanning {}", path.display());
             for path in fs::walk_dir(path).unwrap().filter(|path| path.is_file()) {
-                debug!("Found {}", path.display());
                 let stat = path.stat().unwrap();
-                stats.insert(stat.unstable.inode, CopyableFileStat::new(path, &stat));
+                debug!("Found {}, {}", path.display(), stat.modified);
+                stats.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
             }
         }
         stats
@@ -172,7 +172,7 @@ mod test {
     use std::time::Duration;
 
     use super::Watcher;
-    use super::{Create, /*Modify,*/ Rename, Remove};
+    use super::{Create, Modify, Rename, Remove};
 
     #[test]
     fn create_single_file() {
@@ -245,29 +245,30 @@ mod test {
         }
     }
 
-//    #[test]
-//    fn modify_single_file() {
-//        let tempdir = TempDir::new("modify").unwrap();
-//        let mut filepath = tempdir.path().clone();
-//        filepath.push(Path::new("file.log"));
+    #[test]
+    fn modify_single_file() {
+        let tmp = TempDir::new("modify").unwrap();
+        let path = tmp.path().join("file.log");
 
-//        let mut file = File::create(&filepath).unwrap();
+        let mut file = File::create(&path).unwrap();
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tempdir.path()).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        loop {
-//        match watcher.rx.recv() {
-//            Modify(path) => {
-//                assert_eq!(b"file.log", Path::new(path.as_slice()).filename().unwrap());
-//            }
-//            event @ _ => { debug!("Expected Modify event, actual: {}", event) }
-//        }
-//        timer::sleep(Duration::milliseconds(10000));
-//        debug!("After sleep");
-//        file.write(b"some bytes!\n").unwrap();
-//        file.flush().unwrap();
-//        file.fsync().unwrap();
-//        }
-//    }
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
+
+        // Timeout is need to be at least one second, because most filesystems have seconds resolution.
+        timer::sleep(Duration::milliseconds(1000));
+
+        file.write(b"some bytes!\n").unwrap();
+        file.flush().unwrap();
+        file.fsync().unwrap();
+
+        match watcher.rx.recv() {
+            Modify(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap());
+            }
+            _ => { debug!("Expected Modify event") }
+        }
+    }
 }
