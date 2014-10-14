@@ -164,7 +164,7 @@ impl Drop for CoreFoundationString {
 
 struct CoreFoundationArray {
     d: *const c_void,
-    #[allow(dead_code)] items: Vec<CoreFoundationString>, // It's a RAII container.
+    items: Vec<CoreFoundationString>, // It's a RAII container.
 }
 
 impl CoreFoundationArray {
@@ -195,6 +195,7 @@ impl CoreFoundationArray {
 
 impl Drop for CoreFoundationArray {
     fn drop(&mut self) {
+        self.items.clear();
         unsafe { CFRelease(self.d) }
     }
 }
