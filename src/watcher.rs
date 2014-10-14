@@ -248,7 +248,7 @@ impl Watcher {
         };
 
         spawn(proc() {
-            debug!("starting watcher thread");
+            debug!("Starting watcher thread ...");
             unsafe {
                 *eventloop.lock() = CFRunLoopGetCurrent();
 
@@ -262,15 +262,15 @@ impl Watcher {
                 };
 
                 loop {
-                    debug!("new watcher loop iteration");
+                    debug!("New watcher loop iteration");
                     match crx.recv() {
                         Update(paths) => {
-                            debug!("updating watcher loop with {}", paths);
+                            debug!("Updating watcher loop with {}", paths);
                             *stream.lock() = recreate_stream(*eventloop.lock(), &context, paths);
                             CFRunLoopRun();
                         }
                         Exit => {
-                            debug!("graceful shutdown");
+                            debug!("Received watcher exit event - performing graceful shutdown");
                             break
                         }
                     }
@@ -283,7 +283,7 @@ impl Watcher {
 
     pub fn watch(&mut self, path: &Path) -> IoResult<()> {
         if path.exists() {
-            debug!("adding {} to watch", path.display());
+            debug!("Adding '{}' to the watch", path.display());
             let path = os::make_absolute(path);
             let path = match path.as_str() {
                 Some(path) => String::from_str(path),
@@ -379,7 +379,7 @@ mod test {
 
         match watcher.rx.recv() {
             Create(p) => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
-            event @ _ => { fail!("expected Create event, actual: {}", event) }
+            event @ _ => { fail!("Expected Create event, actual: {}", event) }
         }
     }
 
@@ -400,7 +400,7 @@ mod test {
 
         match watcher.rx.recv() {
             Remove(p) => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
-            event @ _  => { fail!("expected Remove event, actual: {}", event) }
+            event @ _  => { fail!("Expected Remove event, actual: {}", event) }
         }
     }
 
@@ -425,7 +425,7 @@ mod test {
                 assert_eq!(b"file-old.log", Path::new(old.as_slice()).filename().unwrap());
                 assert_eq!(b"file-new.log", Path::new(new.as_slice()).filename().unwrap());
             }
-            event @ _ => { fail!("expected Rename event, actual: {}", event) }
+            event @ _ => { fail!("Expected Rename event, actual: {}", event) }
         }
     }
 }
