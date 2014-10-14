@@ -161,8 +161,7 @@ mod test {
     #[test]
     fn create_single_file() {
         let tmp = TempDir::new("").unwrap();
-        let mut path = tmp.path().clone();
-        path.push(Path::new("file.log"));
+        let path = tmp.path().join("file.log");
 
         let mut watcher = Watcher::new();
         watcher.watch(tmp.path().clone());
