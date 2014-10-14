@@ -7,7 +7,7 @@ use std::io::fs::PathExtensions;
 //#[deriving(Show)]
 pub enum Event {
     Create(Path),
-    Remove(String),
+    Remove(Path),
     //ModifyMeta,
     Modify(String),
     Rename(String, String),
@@ -86,7 +86,7 @@ impl Watcher {
         let timeout = timer.periodic(period);
 
         let mut paths = HashSet::new();
-        let mut prev = HashMap::new();
+        let mut prev: HashMap<u64, CopyableFileStat> = HashMap::new();
         loop {
             debug!("Event loop tick ...");
 
@@ -95,6 +95,12 @@ impl Watcher {
             for (inode, stat) in curr.iter() {
                 if !prev.contains_key(inode) {
                     tx.send(Create(stat.path.clone()));
+                }
+            }
+
+            for (inode, stat) in prev.iter() {
+                if !curr.contains_key(inode) {
+                    tx.send(Remove(stat.path.clone()));
                 }
             }
 
@@ -144,13 +150,13 @@ mod test {
     extern crate test;
 
     use std::io::{File, TempDir};
-//    use std::io::fs;
-//    use std::io::fs::PathExtensions;
+    use std::io::fs;
+    use std::io::fs::PathExtensions;
     use std::io::timer;
     use std::time::Duration;
 
     use super::Watcher;
-    use super::{Create, /*Modify, Rename, Remove*/};
+    use super::{Create, /*Modify, Rename,*/ Remove};
 
     #[test]
     fn create_single_file() {
@@ -161,7 +167,7 @@ mod test {
         let mut watcher = Watcher::new();
         watcher.watch(tmp.path().clone());
 
-        timer::sleep(Duration::milliseconds(100));
+        timer::sleep(Duration::milliseconds(50));
 
         File::create(&path).unwrap();
 
@@ -173,26 +179,30 @@ mod test {
         }
     }
 
-//    #[test]
-//    fn remove_file() {
-//        let tempdir = TempDir::new("").unwrap();
-//        let mut filepath = tempdir.path().clone();
+    #[test]
+    fn remove_single_file() {
+        let tmp = TempDir::new("").unwrap();
+        let path = tmp.path().join("file.log");
 
-//        filepath.push(Path::new("file.log"));
+        assert!(!path.exists());
+        File::create(&path).unwrap();
 
-//        assert!(!filepath.exists());
-//        File::create(&filepath).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tempdir.path()).unwrap();
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
 
-//        fs::unlink(&filepath).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        match watcher.rx.recv() {
-//            Remove(p) => { assert_eq!(b"file.log", Path::new(p.as_slice()).filename().unwrap()) }
-//            event @ _  => { fail!("Expected Remove event, actual: {}", event) }
-//        }
-//    }
+        fs::unlink(&path).unwrap();
+
+        match watcher.rx.recv() {
+            Remove(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap())
+            }
+            _  => { fail!("Expected Remove event") }
+        }
+    }
 
 //    #[test]
 //    fn rename_file() {
