@@ -102,17 +102,16 @@ fn callback(_stream: *const c_void,
         })
     };
 
-    let mut paths_ : Vec<CString> = Vec::new();
-    for path in paths.iter() {
-        paths_.push(unsafe { CString::new(*path, false) });
-    }
+    let paths = Vec::from_fn(size as uint, |id| {
+        unsafe { CString::new(paths[id], false) }
+    });
 
     let mut renamed = false;
     let mut oldname = String::new();
     for id in range(0, size as uint) {
-        debug!("Received filesystem event: [id: {}, ev: {}] from '{}'", ids[id], events[id], paths_[id]);
+        debug!("Received filesystem event: [id: {}, ev: {}] from '{}'", ids[id], events[id], paths[id]);
         let event = events[id];
-        let path = String::from_str(paths_[id].as_str().unwrap());
+        let path = String::from_str(paths[id].as_str().unwrap());
 
         if event & kFSEventStreamEventFlagItemIsFile as u32 == 0 {
             continue;
