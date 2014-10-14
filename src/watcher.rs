@@ -128,9 +128,9 @@ impl Watcher {
     fn rescan(paths: &HashSet<Path>) -> HashMap<u64, CopyableFileStat> {
         let mut stats = HashMap::new();
         for path in paths.iter() {
-            debug!("Handling {}", path.display());
+            debug!("Scanning {}", path.display());
             for path in fs::walk_dir(path).unwrap().filter(|path| path.is_file()) {
-                debug!("File {}", path.display());
+                debug!("Found {}", path.display());
                 let stat = path.stat().unwrap();
                 stats.insert(stat.unstable.inode, CopyableFileStat::new(path, &stat));
             }
