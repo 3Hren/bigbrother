@@ -1,4 +1,5 @@
 use std::collections::{HashSet, HashMap};
+use std::collections::hashmap::{Occupied, Vacant};
 use std::io::fs;
 use std::io::{FileStat, FilePermission, Timer};
 use std::time::Duration;
@@ -9,8 +10,8 @@ pub enum Event {
     Create(Path),
     Remove(Path),
     //ModifyMeta,
-    Modify(String),
-    Rename(String, String),
+    Modify(Path),
+    Rename(Path, Path),
 }
 
 enum Control {
@@ -92,16 +93,31 @@ impl Watcher {
 
             let curr = Watcher::rescan(&paths);
 
+            // Check for created files.
             for (inode, stat) in curr.iter() {
                 if !prev.contains_key(inode) {
                     tx.send(Create(stat.path.clone()));
                 }
             }
 
+            // Check for removed files.
             for (inode, stat) in prev.iter() {
                 if !curr.contains_key(inode) {
                     tx.send(Remove(stat.path.clone()));
                 }
+            }
+
+            // Check for changed files.
+            for (inode, stat) in curr.iter() {
+                match prev.entry(*inode) {
+                    Vacant(..) => continue,
+                    Occupied(entry) => {
+                        let prevstat = entry.get();
+                        if prevstat.path != stat.path {
+                            tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
+                        }
+                    }
+                };
             }
 
             prev = curr;
@@ -156,7 +172,7 @@ mod test {
     use std::time::Duration;
 
     use super::Watcher;
-    use super::{Create, /*Modify, Rename,*/ Remove};
+    use super::{Create, /*Modify,*/ Rename, Remove};
 
     #[test]
     fn create_single_file() {
@@ -203,30 +219,31 @@ mod test {
         }
     }
 
-//    #[test]
-//    fn rename_file() {
-//        let tempdir = TempDir::new("").unwrap();
-//        let mut oldfilepath = tempdir.path().clone();
-//        oldfilepath.push(Path::new("file-old.log"));
+    #[test]
+    fn rename_single_file() {
+        let tmp = TempDir::new("").unwrap();
+        let oldpath = tmp.path().join("file-old.log");
+        let newpath = tmp.path().join("file-new.log");
 
-//        File::create(&oldfilepath).unwrap();
+        File::create(&oldpath).unwrap();
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tempdir.path()).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        let mut newfilepath = tempdir.path().clone();
-//        newfilepath.push(Path::new("file-new.log"));
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
 
-//        fs::rename(&oldfilepath, &newfilepath).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        match watcher.rx.recv() {
-//            Rename(old, new) => {
-//                assert_eq!(b"file-old.log", Path::new(old.as_slice()).filename().unwrap());
-//                assert_eq!(b"file-new.log", Path::new(new.as_slice()).filename().unwrap());
-//            }
-//            event @ _ => { fail!("Expected Rename event, actual: {}", event) }
-//        }
-//    }
+        fs::rename(&oldpath, &newpath).unwrap();
+
+        match watcher.rx.recv() {
+            Rename(old, new) => {
+                assert_eq!(b"file-old.log", old.filename().unwrap());
+                assert_eq!(b"file-new.log", new.filename().unwrap());
+            }
+            _ => { fail!("Expected Rename event") }
+        }
+    }
 
 //    #[test]
 //    fn modify_single_file() {
