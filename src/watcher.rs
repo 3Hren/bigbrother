@@ -4,7 +4,7 @@ use std::collections::{HashSet};
 use std::c_str::CString;
 use std::io::{IoError, IoResult};
 use std::io::fs::PathExtensions;
-use std::mem::{transmute};
+use std::mem;
 use std::ptr;
 use std::raw::Slice;
 use std::os;
@@ -82,21 +82,21 @@ fn callback(_stream: *const c_void,
     };
 
     let events: &[u32] = unsafe {
-        transmute(Slice {
+        mem::transmute(Slice {
             data: events,
             len: size as uint,
         })
     };
 
     let ids: &[u64] = unsafe {
-        transmute(Slice {
+        mem::transmute(Slice {
             data: ids,
             len: size as uint,
         })
     };
 
     let paths: &[*const i8] = unsafe {
-        transmute(Slice {
+        mem::transmute(Slice {
             data: paths,
             len: size as uint,
         })
