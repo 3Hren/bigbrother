@@ -176,7 +176,7 @@ mod test {
 
     #[test]
     fn create_single_file() {
-        let tmp = TempDir::new("").unwrap();
+        let tmp = TempDir::new("create-single").unwrap();
         let path = tmp.path().join("file.log");
 
         let mut watcher = Watcher::new();
@@ -196,7 +196,7 @@ mod test {
 
     #[test]
     fn remove_single_file() {
-        let tmp = TempDir::new("").unwrap();
+        let tmp = TempDir::new("remove-single").unwrap();
         let path = tmp.path().join("file.log");
 
         assert!(!path.exists());
@@ -221,7 +221,7 @@ mod test {
 
     #[test]
     fn rename_single_file() {
-        let tmp = TempDir::new("").unwrap();
+        let tmp = TempDir::new("rename-single").unwrap();
         let oldpath = tmp.path().join("file-old.log");
         let newpath = tmp.path().join("file-new.log");
 
@@ -247,7 +247,7 @@ mod test {
 
     #[test]
     fn modify_single_file() {
-        let tmp = TempDir::new("modify").unwrap();
+        let tmp = TempDir::new("modify-single").unwrap();
         let path = tmp.path().join("file.log");
 
         let mut file = File::create(&path).unwrap();
