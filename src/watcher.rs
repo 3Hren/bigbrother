@@ -306,4 +306,31 @@ mod test {
         }
         assert!(matches.is_empty());
     }
+
+    #[test]
+    fn rename_file_from_nonwatcher_directory_to_watched() {
+        // Event should be considered as file creation in watched directory.
+        let tmp1 = TempDir::new("rename-nowatched").unwrap();
+        let tmp2 = TempDir::new("rename-towatched").unwrap();
+        let oldpath = tmp1.path().join("file-old.log");
+        let newpath = tmp2.path().join("file-new.log");
+
+        File::create(&oldpath).unwrap();
+
+        timer::sleep(Duration::milliseconds(50));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp2.path().clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::rename(&oldpath, &newpath).unwrap();
+
+        match watcher.rx.recv() {
+            Create(p) => {
+                assert_eq!(b"file-new.log", p.filename().unwrap());
+            }
+            _ => { fail!("Expected `Create` event") }
+        }
+    }
 }
