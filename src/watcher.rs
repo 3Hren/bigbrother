@@ -165,6 +165,8 @@ impl Drop for Watcher {
 mod test {
     extern crate test;
 
+    use std::str;
+    use std::collections::HashSet;
     use std::io::{File, TempDir};
     use std::io::fs;
     use std::io::fs::PathExtensions;
@@ -270,5 +272,38 @@ mod test {
             }
             _ => { debug!("Expected Modify event") }
         }
+    }
+
+    #[test]
+    fn create_two_files_in_different_directories() {
+        let tmp1 = TempDir::new("create-1").unwrap();
+        let tmp2 = TempDir::new("create-2").unwrap();
+        let path1 = tmp1.path().join("file1.log");
+        let path2 = tmp2.path().join("file2.log");
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp1.path().clone());
+        watcher.watch(tmp2.path().clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        File::create(&path1).unwrap();
+        File::create(&path2).unwrap();
+
+        let mut matches = HashSet::new();
+        matches.insert(String::from_str("file1.log"));
+        matches.insert(String::from_str("file2.log"));
+
+        let mut counter = 2u8;
+        while counter > 0 {
+            match watcher.rx.recv() {
+                Create(p) => {
+                    assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
+                }
+                _ => { fail!("Expected `Create` event") }
+            }
+            counter -= 1;
+        }
+        assert!(matches.is_empty());
     }
 }
