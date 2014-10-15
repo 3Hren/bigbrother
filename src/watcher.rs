@@ -217,7 +217,7 @@ mod test {
             Remove(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _  => { fail!("Expected Remove event") }
+            _  => { fail!("Expected `Remove` event") }
         }
     }
 
@@ -243,7 +243,7 @@ mod test {
                 assert_eq!(b"file-old.log", old.filename().unwrap());
                 assert_eq!(b"file-new.log", new.filename().unwrap());
             }
-            _ => { fail!("Expected Rename event") }
+            _ => { fail!("Expected `Rename` event") }
         }
     }
 
@@ -270,7 +270,7 @@ mod test {
             Modify(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap());
             }
-            _ => { debug!("Expected Modify event") }
+            _ => { debug!("Expected `Modify` event") }
         }
     }
 
