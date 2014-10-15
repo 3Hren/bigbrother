@@ -55,6 +55,8 @@ impl WatchedFileStat {
     }
 }
 
+type FileStatMap = HashMap<u64, WatchedFileStat>;
+
 impl Watcher {
     pub fn new() -> Watcher {
         let (tx, rx) = channel();
@@ -83,42 +85,14 @@ impl Watcher {
         let timeout = timer.periodic(period);
 
         let mut paths = HashSet::new();
-        let mut prev: HashMap<u64, WatchedFileStat> = HashMap::new();
+        let mut prev: FileStatMap = HashMap::new();
         loop {
             debug!("Event loop tick ...");
 
             let curr = Watcher::rescan(&paths);
-
-            // Check for created files.
-            for (inode, stat) in curr.iter() {
-                if !prev.contains_key(inode) {
-                    tx.send(Create(stat.path.clone()));
-                }
-            }
-
-            // Check for removed files.
-            for (inode, stat) in prev.iter() {
-                if !curr.contains_key(inode) {
-                    tx.send(Remove(stat.path.clone()));
-                }
-            }
-
-            // Check for changed files.
-            for (inode, stat) in curr.iter() {
-                match prev.entry(*inode) {
-                    Vacant(..) => continue,
-                    Occupied(entry) => {
-                        let prevstat = entry.get();
-                        if prevstat.path != stat.path {
-                            tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
-                        }
-
-                        if prevstat.modified != stat.modified {
-                            tx.send(Modify(stat.path.clone()));
-                        }
-                    }
-                };
-            }
+            Watcher::created(&prev, &curr, &tx);
+            Watcher::removed(&prev, &curr, &tx);
+            Watcher::modified(&mut prev, &curr, &tx);
 
             prev = curr;
             select! {
@@ -141,7 +115,7 @@ impl Watcher {
     }
 
     //TODO: What to do if something failed?
-    fn rescan(paths: &HashSet<Path>) -> HashMap<u64, WatchedFileStat> {
+    fn rescan(paths: &HashSet<Path>) -> FileStatMap {
         let mut stats = HashMap::new();
         for path in paths.iter() {
             debug!("Scanning {}", path.display());
@@ -152,6 +126,40 @@ impl Watcher {
             }
         }
         stats
+    }
+
+    fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in curr.iter() {
+            if !prev.contains_key(inode) {
+                tx.send(Create(stat.path.clone()));
+            }
+        }
+    }
+
+    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in prev.iter() {
+            if !curr.contains_key(inode) {
+                tx.send(Remove(stat.path.clone()));
+            }
+        }
+    }
+
+    fn modified(prev: &mut FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in curr.iter() {
+            match prev.entry(*inode) {
+                Vacant(..) => continue,
+                Occupied(entry) => {
+                    let prevstat = entry.get();
+                    if prevstat.path != stat.path {
+                        tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
+                    }
+
+                    if prevstat.modified != stat.modified {
+                        tx.send(Modify(stat.path.clone()));
+                    }
+                }
+            };
+        }
     }
 }
 
