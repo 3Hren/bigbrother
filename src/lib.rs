@@ -1,4 +1,5 @@
 #![feature(phase)]
+#![feature(if_let)]
 
 extern crate libc;
 extern crate sync;

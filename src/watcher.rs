@@ -1,5 +1,4 @@
 use std::collections::{HashSet, HashMap};
-use std::collections::hashmap::{Occupied, Vacant};
 use std::io::fs;
 use std::io::{FileStat, Timer};
 use std::time::Duration;
@@ -90,7 +89,7 @@ impl Watcher {
             let curr = Watcher::rescan(&paths);
             Watcher::created(&prev, &curr, &tx);
             Watcher::removed(&prev, &curr, &tx);
-            Watcher::modified(&mut prev, &curr, &tx);
+            Watcher::modified(&prev, &curr, &tx);
 
             prev = curr;
             select! {
@@ -142,21 +141,17 @@ impl Watcher {
         }
     }
 
-    fn modified(prev: &mut FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
         for (inode, stat) in curr.iter() {
-            match prev.entry(*inode) {
-                Vacant(..) => continue,
-                Occupied(entry) => {
-                    let prevstat = entry.get();
-                    if prevstat.path != stat.path {
-                        tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
-                    }
-
-                    if prevstat.modified != stat.modified {
-                        tx.send(Modify(stat.path.clone()));
-                    }
+            if let Some(prevstat) = prev.find(inode) {
+                if prevstat.path != stat.path {
+                    tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
                 }
-            };
+
+                if prevstat.modified != stat.modified {
+                    tx.send(Modify(stat.path.clone()));
+                }
+            }
         }
     }
 }
