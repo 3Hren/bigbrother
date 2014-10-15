@@ -116,6 +116,7 @@ impl Watcher {
         let mut stats = HashMap::new();
         for path in paths.iter() {
             debug!("Scanning {}", path.display());
+
             for path in fs::walk_dir(path).unwrap().filter(|path| path.is_file()) {
                 let stat = path.stat().unwrap();
                 debug!("Found {}, {}", path.display(), stat.modified);
