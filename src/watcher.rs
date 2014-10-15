@@ -257,7 +257,7 @@ mod test {
         let mut watcher = Watcher::new();
         watcher.watch(tmp.path().clone());
 
-        // Timeout is need to be at least one second, because most filesystems have seconds resolution.
+        // Timeout is need to be at least one second, because at least ext3 filesystem has seconds resolution.
         timer::sleep(Duration::milliseconds(1000));
 
         file.write(b"some bytes!\n").unwrap();
