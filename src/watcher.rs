@@ -360,4 +360,33 @@ mod test {
             _ => { fail!("Expected `Remove` event") }
         }
     }
+
+    #[test]
+    fn rename_file_from_watched_directory_to_watched() {
+        // Event should be considered as file renaming.
+        let tmp1 = TempDir::new("rename-watched1").unwrap();
+        let tmp2 = TempDir::new("rename-watched2").unwrap();
+        let oldpath = tmp1.path().join("file-old.log");
+        let newpath = tmp2.path().join("file-new.log");
+
+        File::create(&oldpath).unwrap();
+
+        timer::sleep(Duration::milliseconds(50));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp1.path().clone());
+        watcher.watch(tmp2.path().clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::rename(&oldpath, &newpath).unwrap();
+
+        match watcher.rx.recv() {
+            Rename(old, new) => {
+                assert_eq!(b"file-old.log", old.filename().unwrap());
+                assert_eq!(b"file-new.log", new.filename().unwrap());
+            }
+            _ => { fail!("Expected `Rename` event") }
+        }
+    }
 }
