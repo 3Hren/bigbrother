@@ -5,11 +5,9 @@ use std::io::{FileStat, Timer};
 use std::time::Duration;
 use std::io::fs::PathExtensions;
 
-//#[deriving(Show)]
 pub enum Event {
     Create(Path),
     Remove(Path),
-    //ModifyMeta,
     Modify(Path),
     Rename(Path, Path),
 }
