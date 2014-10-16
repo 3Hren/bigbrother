@@ -9,3 +9,4 @@ extern crate sync;
 pub use self::watcher::Watcher;
 
 pub mod watcher;
+mod native;
