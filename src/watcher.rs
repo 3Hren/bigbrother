@@ -112,7 +112,7 @@ impl Watcher {
         }
     }
 
-    //TODO: What to do if something failed?
+    //TODO: What to do if something has failed?
     fn rescan(paths: &HashSet<Path>) -> FileStatMap {
         let mut stats = HashMap::new();
         for path in paths.iter() {
