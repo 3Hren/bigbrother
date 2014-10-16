@@ -86,12 +86,6 @@ impl Watcher {
         loop {
             debug!("Event loop tick ...");
 
-            let curr = Watcher::rescan(&paths);
-            Watcher::created(&prev, &curr, &tx);
-            Watcher::removed(&prev, &curr, &tx);
-            Watcher::modified(&prev, &curr, &tx);
-
-            prev = curr;
             select! {
                 control = crx.recv() => {
                     match control {
@@ -106,7 +100,14 @@ impl Watcher {
                         }
                     }
                 },
-                () = timeout.recv() => {}
+                () = timeout.recv() => {
+                    let curr = Watcher::rescan(&paths);
+                    Watcher::created(&prev, &curr, &tx);
+                    Watcher::removed(&prev, &curr, &tx);
+                    Watcher::modified(&prev, &curr, &tx);
+
+                    prev = curr;
+                }
             }
         }
     }
