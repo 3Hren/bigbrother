@@ -1,8 +1,11 @@
 use std::collections::{HashSet, HashMap};
 use std::io::fs;
-use std::io::{FileStat, Timer};
+use std::io::{FileStat};
 use std::time::Duration;
 use std::io::fs::PathExtensions;
+
+use super::native::Unknown;
+use super::native::backend::Backend;
 
 pub enum Event {
     Create(Path),
@@ -78,8 +81,7 @@ impl Watcher {
         debug!("Starting watcher thread ...");
 
         let period = Duration::milliseconds(100);
-        let mut timer = Timer::new().unwrap();
-        let timeout = timer.periodic(period);
+        let (mut backend, erx) = Backend::new(period);
 
         let mut paths = HashSet::new();
         let mut prev: FileStatMap = HashMap::new();
@@ -93,6 +95,7 @@ impl Watcher {
                             debug!("Received watcher update event");
                             paths = newpaths;
                             prev = Watcher::rescan(&paths);
+                            backend.register(paths.clone());
                         }
                         Exit => {
                             debug!("Received watcher exit event - performing graceful shutdown");
@@ -100,13 +103,36 @@ impl Watcher {
                         }
                     }
                 },
-                () = timeout.recv() => {
-                    let curr = Watcher::rescan(&paths);
-                    Watcher::created(&prev, &curr, &tx);
-                    Watcher::removed(&prev, &curr, &tx);
-                    Watcher::modified(&prev, &curr, &tx);
-
-                    prev = curr;
+                event = erx.recv() => {
+                    match event {
+//                        Changed(path, flags) => {
+//                            Если path - файл
+//                              Если created
+//                                -> Create, если файл существует.
+//                                Добавить в curr.
+//                              Если removed
+//                                -> Remove, если файл не существует.
+//                                Удалить из curr.
+//                              Если renamed & !exists, то это событие *Rename(old).
+//                                Получить inode по имени из prev.
+//                                Найти в curr, сделав полный рескан.
+//                                  -> Rename(old, new) если удалось, или
+//                                  -> Remove(old) если не нашлось
+//                              Если renamed &  exists, то это событие *Rename(new).
+//                                Получить inode из stat.
+//                                Найти в prev.
+//                                  -> Ignore, если нашлось (мы уже испустили событие)
+//                                  -> Create(new), если не нашлось
+//                            Если path - директория, то пересканировать только эту директорию.
+//                        }
+                        Unknown => {
+                            let curr = Watcher::rescan(&paths);
+                            Watcher::created(&prev, &curr, &tx);
+                            Watcher::removed(&prev, &curr, &tx);
+                            Watcher::modified(&prev, &curr, &tx);
+                            prev = curr;
+                        }
+                    }
                 }
             }
         }
