@@ -1,4 +1,5 @@
 use std::collections::{HashSet, HashMap};
+use std::comm::Select;
 use std::io::fs;
 use std::io::{FileStat};
 use std::time::Duration;
@@ -81,30 +82,39 @@ impl Watcher {
         debug!("Starting watcher thread ...");
 
         let period = Duration::milliseconds(100);
-        let (mut backend, erx) = Backend::new(period);
+        let mut backend = Backend::new(period);
 
         let mut paths = HashSet::new();
         let mut prev: FileStatMap = HashMap::new();
         loop {
             debug!("Event loop tick ...");
 
-            select! {
-                control = crx.recv() => {
-                    match control {
+            let mut reg = false;
+            {
+                let sel = Select::new();
+                let mut chrx = sel.handle(&crx);
+                let mut ehrx = sel.handle(&backend.watcher.rx);
+                unsafe {
+                    chrx.add();
+                    ehrx.add();
+                };
+                let ret = sel.wait();
+
+                if ret == chrx.id() {
+                    match crx.recv() {
                         Update(newpaths) => {
                             debug!("Received watcher update event");
                             paths = newpaths;
                             prev = Watcher::rescan(&paths);
-                            backend.register(paths.clone());
+                            reg = true;
                         }
                         Exit => {
                             debug!("Received watcher exit event - performing graceful shutdown");
                             break;
                         }
                     }
-                },
-                event = erx.recv() => {
-                    match backend.transform(event) {
+                } else if ret == ehrx.id() {
+                    match backend.transform(backend.watcher.rx.recv()) {
 //                        Changed(path, flags) => {
 //                            Если path - файл
 //                              Если created
@@ -134,6 +144,10 @@ impl Watcher {
                         }
                     }
                 }
+            }
+
+            if reg {
+                backend.register(paths.clone());
             }
         }
     }
@@ -290,6 +304,7 @@ mod test {
 
         // Timeout is need to be at least one second, because at least ext3 filesystem has seconds resolution.
         timer::sleep(Duration::milliseconds(1000));
+        debug!("Modifying file ...");
 
         file.write(b"some bytes!\n").unwrap();
         file.flush().unwrap();
