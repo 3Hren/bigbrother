@@ -104,7 +104,7 @@ impl Watcher {
                     }
                 },
                 event = erx.recv() => {
-                    match event {
+                    match backend.transform(event) {
 //                        Changed(path, flags) => {
 //                            Если path - файл
 //                              Если created
