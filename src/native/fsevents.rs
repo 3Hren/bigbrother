@@ -8,6 +8,10 @@ use std::mem;
 use std::ptr;
 use std::raw::Slice;
 use std::os;
+use std::io::{Timer};
+use std::time::Duration;
+
+//use super;
 
 use libc::{c_void, c_char, c_int, ENOENT};
 
@@ -23,12 +27,13 @@ static kFSEventStreamCreateFlagNoDefer: u32    = 0x00000002;
 static kFSEventStreamCreateFlagFileEvents: u32 = 0x00000010;
 
 #[deriving(Show)]
-pub enum Event {
+enum Event {
     Create(String),
     Remove(String),
     //ModifyMeta,
     Modify(String),
-    Rename(String, String),
+    RenameOld(String),
+    RenameNew(String),
 }
 
 enum Control {
@@ -124,7 +129,6 @@ fn callback(_stream: *const c_void,
     });
 
     let mut renamed = false;
-    let mut oldname = String::new();
     for id in range(0, size as uint) {
         debug!("Received filesystem event: [id: {}, ev: {}] from '{}'", ids[id], events[id], paths[id]);
         let event = events[id];
@@ -145,10 +149,9 @@ fn callback(_stream: *const c_void,
 
         if has_flag(event, kFSEventStreamEventFlagItemRenamed) {
             if renamed {
-                tx.send(Rename(oldname.clone(), path));
-                oldname.clear();
+                tx.send(RenameOld(path));
             } else {
-                oldname = path;
+                tx.send(RenameNew(path));
             }
             renamed = !renamed;
         }
@@ -220,7 +223,7 @@ impl Drop for CoreFoundationArray {
 fn recreate_stream(eventloop: *mut c_void, context: *const FSEventStreamContext, paths: HashSet<String>) -> *mut c_void {
     let paths = CoreFoundationArray::new(&paths);
 
-    let latency = 0.0f64;
+    let latency = 0.05f64;
     let stream = unsafe {
         FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -229,7 +232,7 @@ fn recreate_stream(eventloop: *mut c_void, context: *const FSEventStreamContext,
             paths.d,
             kFSEventStreamEventIdSinceNow,
             latency,
-            kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagFileEvents
+            kFSEventStreamCreateFlagFileEvents
         )
     };
 
@@ -372,4 +375,24 @@ extern {
     fn CFRelease(p: *const c_void);
 }
 
-pub trait Backend {}
+pub struct Backend {
+    pub watcher: Watcher,
+}
+
+impl Backend {
+    pub fn new(period: Duration) -> Backend {
+        Backend {
+            watcher: Watcher::new()
+        }
+    }
+
+    pub fn register(&mut self, paths: HashSet<Path>) {
+        for path in paths.iter() {
+            self.watcher.watch(path);
+        }
+    }
+
+    pub fn transform(&self, ev: Event) -> super::Event {
+        super::Unknown
+    }
+}
