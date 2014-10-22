@@ -182,9 +182,9 @@ impl Watcher {
         }
     }
 
-    pub fn watch(&mut self, path: Path) -> Result<(), KQueueError> {
-        Ok(())
-    }
+//    pub fn watch(&mut self, path: Path) -> Result<(), KQueueError> {
+//        Ok(())
+//    }
 }
 
 extern {
@@ -204,7 +204,7 @@ mod test {
 //    use std::collections::HashSet;
     use std::io::{File, TempDir};
 //    use std::io::fs;
-    use std::io::fs::PathExtensions;
+//    use std::io::fs::PathExtensions;
     use std::io::timer;
     use std::time::Duration;
     use std::ptr;
@@ -213,13 +213,13 @@ mod test {
 
     use libc::{c_void};
 
-    use super::{Watcher, KQueue, NativePath};
+    use super::{KQueue, NativePath};
     use super::{kevent};
     use super::{EVFILT_VNODE};
     use super::{EV_ADD};
-    use super::{NOTE_WRITE, NOTE_RENAME};
+    use super::{NOTE_WRITE};
     use super::{
-        Create,
+//        Create,
 //        Modify,
 //        Rename,
 //        Remove,
@@ -245,4 +245,219 @@ mod test {
 //        let events = kq.event(); // recv
         // check
     }
+
+//    #[test]
+//    fn create_single_file() {
+//        let tmp = TempDir::new("create-single").unwrap();
+//        let path = tmp.path().join("file.log");
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        File::create(&path).unwrap();
+
+//        match watcher.rx.recv() {
+//            Create(p) => {
+//                assert_eq!(b"file.log", p.filename().unwrap())
+//            }
+//            _ => { fail!("Expected `Create` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn remove_single_file() {
+//        let tmp = TempDir::new("remove-single").unwrap();
+//        let path = tmp.path().join("file.log");
+
+//        assert!(!path.exists());
+//        File::create(&path).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        fs::unlink(&path).unwrap();
+
+//        match watcher.rx.recv() {
+//            Remove(p) => {
+//                assert_eq!(b"file.log", p.filename().unwrap())
+//            }
+//            _  => { fail!("Expected `Remove` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn rename_single_file() {
+//        let tmp = TempDir::new("rename-single").unwrap();
+//        let oldpath = tmp.path().join("file-old.log");
+//        let newpath = tmp.path().join("file-new.log");
+
+//        File::create(&oldpath).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        fs::rename(&oldpath, &newpath).unwrap();
+
+//        match watcher.rx.recv() {
+//            Rename(old, new) => {
+//                assert_eq!(b"file-old.log", old.filename().unwrap());
+//                assert_eq!(b"file-new.log", new.filename().unwrap());
+//            }
+//            _ => { fail!("Expected `Rename` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn modify_single_file() {
+//        let tmp = TempDir::new("modify-single").unwrap();
+//        let path = tmp.path().join("file.log");
+
+//        let mut file = File::create(&path).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp.path().clone());
+
+//        // Timeout is need to be at least one second, because at least ext3 filesystem has seconds resolution.
+//        timer::sleep(Duration::milliseconds(1000));
+//        debug!("Modifying file ...");
+
+//        file.write(b"some bytes!\n").unwrap();
+//        file.flush().unwrap();
+//        file.fsync().unwrap();
+
+//        match watcher.rx.recv() {
+//            Modify(p) => {
+//                assert_eq!(b"file.log", p.filename().unwrap());
+//            }
+//            _ => { debug!("Expected `Modify` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn create_two_files_in_different_directories() {
+//        let tmp1 = TempDir::new("create-1").unwrap();
+//        let tmp2 = TempDir::new("create-2").unwrap();
+//        let path1 = tmp1.path().join("file1.log");
+//        let path2 = tmp2.path().join("file2.log");
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp1.path().clone());
+//        watcher.watch(tmp2.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        File::create(&path1).unwrap();
+//        File::create(&path2).unwrap();
+
+//        let mut matches = HashSet::new();
+//        matches.insert(String::from_str("file1.log"));
+//        matches.insert(String::from_str("file2.log"));
+
+//        let mut counter = 2u8;
+//        while counter > 0 {
+//            match watcher.rx.recv() {
+//                Create(p) => {
+//                    assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
+//                }
+//                _ => { fail!("Expected `Create` event") }
+//            }
+//            counter -= 1;
+//        }
+//        assert!(matches.is_empty());
+//    }
+
+//    #[test]
+//    fn rename_file_from_nonwatched_directory_to_watched() {
+//        // Event should be considered as file creation in watched directory.
+//        let tmp1 = TempDir::new("rename-nowatched").unwrap();
+//        let tmp2 = TempDir::new("rename-towatched").unwrap();
+//        let oldpath = tmp1.path().join("file-old.log");
+//        let newpath = tmp2.path().join("file-new.log");
+
+//        File::create(&oldpath).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp2.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        fs::rename(&oldpath, &newpath).unwrap();
+
+//        match watcher.rx.recv() {
+//            Create(p) => {
+//                assert_eq!(b"file-new.log", p.filename().unwrap());
+//            }
+//            _ => { fail!("Expected `Create` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn rename_file_from_watched_directory_to_nonwatched() {
+//        // Event should be considered as file removing in watched directory.
+//        let tmp1 = TempDir::new("rename-iswatched").unwrap();
+//        let tmp2 = TempDir::new("rename-nowatched").unwrap();
+//        let oldpath = tmp1.path().join("file-old.log");
+//        let newpath = tmp2.path().join("file-new.log");
+
+//        File::create(&oldpath).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp1.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        fs::rename(&oldpath, &newpath).unwrap();
+
+//        match watcher.rx.recv() {
+//            Remove(p) => {
+//                assert_eq!(b"file-old.log", p.filename().unwrap());
+//            }
+//            _ => { fail!("Expected `Remove` event") }
+//        }
+//    }
+
+//    #[test]
+//    fn rename_file_from_watched_directory_to_watched() {
+//        // Event should be considered as file renaming.
+//        let tmp1 = TempDir::new("rename-watched1").unwrap();
+//        let tmp2 = TempDir::new("rename-watched2").unwrap();
+//        let oldpath = tmp1.path().join("file-old.log");
+//        let newpath = tmp2.path().join("file-new.log");
+
+//        File::create(&oldpath).unwrap();
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp1.path().clone());
+//        watcher.watch(tmp2.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        fs::rename(&oldpath, &newpath).unwrap();
+
+//        match watcher.rx.recv() {
+//            Rename(old, new) => {
+//                assert_eq!(b"file-old.log", old.filename().unwrap());
+//                assert_eq!(b"file-new.log", new.filename().unwrap());
+//            }
+//            _ => { fail!("Expected `Rename` event") }
+//        }
+//    }
 }
