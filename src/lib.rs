@@ -3,10 +3,11 @@
 
 extern crate libc;
 extern crate sync;
+extern crate time;
 
 #[phase(plugin, link)] extern crate log;
 
-pub use self::watcher::Watcher;
+//pub use self::watcher::Watcher;
 
-pub mod watcher;
+//pub mod watcher;
 mod native;
