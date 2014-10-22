@@ -10,4 +10,6 @@ extern crate time;
 //pub use self::watcher::Watcher;
 
 //pub mod watcher;
-mod native;
+
+pub use self::kqueue::Watcher;
+pub mod kqueue; // TODO: temporary pub to prevent unused warnings.

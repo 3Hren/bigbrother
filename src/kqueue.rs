@@ -1,14 +1,47 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
-use std::collections::{HashSet};
-use std::io::{Timer, Open, Read};
-use std::time::Duration;
 use std::ptr;
-use std::io::fs::{File};
 
 use time::Timespec;
 
 use libc::{c_void, c_int, uintptr_t, intptr_t};
+
+pub enum Event {
+    Create(Path),
+    Remove(Path),
+}
+
+#[deriving(Show)]
+pub enum KQueueError {
+    UnableToCreateKQueue,
+}
+
+pub struct Watcher {
+    pub rx: Receiver<Event>,
+}
+
+impl Watcher {
+    pub fn new() -> Result<Watcher, KQueueError> {
+        let queue = match KQueue::new() {
+            Ok(queue) => queue,
+            Err(err)  => return Err(err)
+        };
+
+        let (tx, rx) = channel();
+
+        spawn(proc(){
+            loop {
+
+            }
+        });
+
+        Ok(Watcher { rx: rx })
+    }
+
+    pub fn watch(&mut self, path: Path) -> Result<(), KQueueError> {
+        Ok(())
+    }
+}
 
 #[repr(C)]
 enum EventFilter {
@@ -43,15 +76,6 @@ struct kevent {
     udata: *const c_void,   /* opaque user data identifier */
 }
 
-pub enum Event {
-    Create(Path),
-    Remove(Path),
-}
-
-pub struct Watcher {
-    pub rx: Receiver<Event>,
-}
-
 struct NativePath {
     fd: i32,
 }
@@ -82,11 +106,6 @@ struct KQueue {
     fd: i32,
 }
 
-#[deriving(Show)]
-enum KQueueError {
-    UnableToCreateKQueue,
-}
-
 impl KQueue {
     fn new() -> Result<KQueue, KQueueError> {
         let fd = unsafe { kqueue() };
@@ -97,9 +116,9 @@ impl KQueue {
         Ok(KQueue { fd: fd })
     }
 
-    fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: Timespec) -> i32 {
+    fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: &Timespec) -> i32 {
         unsafe {
-            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, &timeout)
+            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, timeout)
         }
     }
 }
@@ -136,57 +155,6 @@ impl kevent {
     }
 }
 
-impl Watcher {
-    pub fn new() -> Watcher {
-        let queue = KQueue::new().unwrap();
-
-        let path = "/tmp".to_c_str();
-        let fd = unsafe { open(path.as_ptr(), 0x0000) };
-        if fd < 0 {
-            fail!("unable to open directory");
-        }
-        debug!("fd: {}", fd);
-
-        let (tx, rx) = channel();
-
-//        spawn(proc(){
-//            let ev = kevent {
-//                ident: fd as u64,
-//                filter: EVFILT_VNODE,
-//                flags: EV_ADD | EV_ENABLE | EV_CLEAR,
-//                fflags: NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_RENAME,
-//                data: 0,
-//                udata: ptr::null::<c_void>(),
-//            };
-
-//            unsafe {
-//                let res = kevent(queue.fd, &ev, 1, ptr::null::<kevent>(), 0, ptr::null::<Timespec>());
-//                debug!("RESULT ADD: {}", res);
-//            }
-
-//            unsafe {
-//                let res = kevent(queue.fd, ptr::null::<kevent>(), 0, &ev, 1, ptr::null::<Timespec>());
-//                debug!("RESULT CH: {}", res);
-//                if res < 0 {
-//                    fail!("unable to poll events");
-//                }
-
-//                debug!("filter: {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data);
-//            }
-
-//            unsafe { close(fd); }
-//        });
-
-        Watcher {
-            rx: rx,
-        }
-    }
-
-//    pub fn watch(&mut self, path: Path) -> Result<(), KQueueError> {
-//        Ok(())
-//    }
-}
-
 extern {
     fn kqueue() -> c_int;
     fn kevent(kq: c_int, changelist: *const kevent, nchanges: c_int, eventlist: *const kevent, nevents: c_int, timeout: *const Timespec) -> c_int;
@@ -200,11 +168,7 @@ extern {
 mod test {
     extern crate test;
 
-//    use std::str;
-//    use std::collections::HashSet;
     use std::io::{File, TempDir};
-//    use std::io::fs;
-//    use std::io::fs::PathExtensions;
     use std::io::timer;
     use std::time::Duration;
     use std::ptr;
@@ -213,13 +177,12 @@ mod test {
 
     use libc::{c_void};
 
-    use super::{KQueue, NativePath};
-    use super::{kevent};
+    use super::{KQueue, kevent, NativePath};
     use super::{EVFILT_VNODE};
     use super::{EV_ADD};
     use super::{NOTE_WRITE};
-    use super::{
-//        Create,
+    use super::{Watcher,
+        Create,
 //        Modify,
 //        Rename,
 //        Remove,
@@ -229,42 +192,62 @@ mod test {
     fn kqueue_create_single_file() {
         let tmp = TempDir::new("kqueue-create-single").unwrap();
         let path = tmp.path().join("file.log");
-        let native = NativePath::new(tmp.path().as_str().unwrap()).unwrap();
+        let ntmp = NativePath::new(tmp.path().as_str().unwrap()).unwrap();
 
         let mut queue = KQueue::new().unwrap();
 
         let ievents = [
-            kevent::new(&native, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+            kevent::new(&ntmp, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
         ];
         let mut oevents: [kevent, ..0] = [];
         let timeout = Timespec::new(0, 0);
 
-        let n = queue.process(&ievents, &mut oevents, timeout);
+        let n = queue.process(&ievents, &mut oevents, &timeout);
+
         assert_eq!(0, n);
 
-//        let events = kq.event(); // recv
-        // check
+        timer::sleep(Duration::milliseconds(50));
+        File::create(&path).unwrap();
+
+        let ievents = [];
+        let mut oevents: [kevent, ..1] = [kevent::empty()];
+
+        let n = queue.process(&ievents, &mut oevents, &timeout);
+
+        assert_eq!(1, n);
+        let actual = oevents[0];
+        assert_eq!(ntmp.fd as u64, actual.ident);
+        assert_eq!(EVFILT_VNODE as i16, actual.filter);
+        assert_eq!(EV_ADD.bits(), actual.flags);
+        assert_eq!(NOTE_WRITE.bits(), actual.fflags);
     }
 
-//    #[test]
-//    fn create_single_file() {
-//        let tmp = TempDir::new("create-single").unwrap();
-//        let path = tmp.path().join("file.log");
+//    #[test] watch file modified.
+//    #[test] watch file attributes modified.
+//    #[test] watch file removed.
+//    #[test] watch file renamed.
+//    #[test] watch file when removed directory.
+//    #[test] watch file when renamed directory.
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp.path().clone());
+    #[test]
+    fn create_single_file() {
+        let tmp = TempDir::new("create-single").unwrap();
+        let path = tmp.path().join("file.log");
 
-//        timer::sleep(Duration::milliseconds(50));
+        let mut watcher = Watcher::new().unwrap();
+        watcher.watch(tmp.path().clone());
 
-//        File::create(&path).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        match watcher.rx.recv() {
-//            Create(p) => {
-//                assert_eq!(b"file.log", p.filename().unwrap())
-//            }
-//            _ => { fail!("Expected `Create` event") }
-//        }
-//    }
+        File::create(&path).unwrap();
+
+        match watcher.rx.recv() {
+            Create(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap())
+            }
+            _ => { fail!("Expected `Create` event") }
+        }
+    }
 
 //    #[test]
 //    fn remove_single_file() {
