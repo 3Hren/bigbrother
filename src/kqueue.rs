@@ -1,10 +1,12 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
+use std::collections::HashMap;
+use std::io::fs::PathExtensions;
 use std::ptr;
 
-use time::Timespec;
-
 use libc::{c_void, c_int, uintptr_t, intptr_t};
+
+use time::Timespec;
 
 pub enum Event {
     Create(Path),
@@ -16,30 +18,94 @@ pub enum KQueueError {
     UnableToCreateKQueue,
 }
 
+enum Control {
+    Add(Path),
+    Exit,
+}
+
 pub struct Watcher {
+    fd: i32,
     pub rx: Receiver<Event>,
+    txc: Sender<Control>,
 }
 
 impl Watcher {
-    pub fn new() -> Result<Watcher, KQueueError> {
+    pub fn new() -> Watcher {
         let queue = match KQueue::new() {
             Ok(queue) => queue,
-            Err(err)  => return Err(err)
+            Err(err)  => fail!(err)
         };
 
+        let fd = queue.fd;
         let (tx, rx) = channel();
+        let (txc, rxc) = channel();
 
-        spawn(proc(){
-            loop {
+        spawn(proc() Watcher::run(queue, tx, rxc));
 
-            }
-        });
-
-        Ok(Watcher { rx: rx })
+        Watcher {
+            fd: fd,
+            rx: rx,
+            txc: txc,
+        }
     }
 
-    pub fn watch(&mut self, path: Path) -> Result<(), KQueueError> {
-        Ok(())
+    pub fn watch(&mut self, path: Path) {
+        debug!("Adding {} to the watcher", path.as_str());
+
+        self.txc.send(Add(path));
+        self.wake();
+    }
+
+    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
+        debug!("Starting watcher thread ...");
+
+        loop {
+            debug!("Performing next watcher loop iteration ...");
+
+            let mut paths = HashMap::new();
+            match rxc.recv() {
+                Add(path) => {
+                    // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
+
+                    let path = NativePath::new(path.as_str().unwrap()).unwrap(); // TODO: Unsafe.
+                    paths.insert(path.fd, path);
+//                    let input = [
+//                        kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+//                    ];
+//                    let mut output: [kevent, ..0] = [];
+                }
+                Exit => break
+            }
+
+            let input = [];
+            let mut output: [kevent, ..1] = [kevent::empty()];
+
+            let n = queue.process(&input, &mut output, &None);
+            // Если user событие, то можно
+            debug!("=={}", n);
+        }
+
+        debug!("Watcher thread has been stopped");
+    }
+
+    fn wake(&self) {
+        let input = [
+            kevent::new(0, EVFILT_USER, EV_ADD, NOTE_NONE, 0, ptr::null::<c_void>())
+        ];
+        let mut output: [kevent, ..0] = [];
+
+        unsafe {
+            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, ptr::null::<Timespec>())
+        };
+    }
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        debug!("Dropping the watcher");
+
+        self.txc.send(Exit);
+        self.wake();
     }
 }
 
@@ -59,6 +125,7 @@ bitflags! {
 
 bitflags! {
     flags EventFilterFlags: u32 {
+        const NOTE_NONE     = 0x00000000,
         const NOTE_DELETE   = 0x00000001,
         const NOTE_WRITE    = 0x00000002,
         const NOTE_EXTEND   = 0x00000004,
@@ -68,12 +135,36 @@ bitflags! {
 
 #[repr(C)]
 struct kevent {
-    ident: uintptr_t,       /* identifier for this event */
-    filter: i16,            /* filter for event */
-    flags: u16,             /* general flags */
-    fflags: u32,            /* filter-specific flags */
-    data: intptr_t,         /* filter-specific data */
-    udata: *const c_void,   /* opaque user data identifier */
+    ident: uintptr_t,       // Identifier for this event.
+    filter: i16,            // Filter for event.
+    flags: u16,             // General flags.
+    fflags: u32,            // Filter-specific flags.
+    data: intptr_t,         // Filter-specific data.
+    udata: *const c_void,   // Opaque user data identifier.
+}
+
+impl kevent {
+    fn new(ident: u64, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags, data: intptr_t, udata: *const c_void) -> kevent {
+        kevent {
+            ident: ident,
+            filter: filter as i16,
+            flags: flags.bits() as u16,
+            fflags: fflags.bits() as u32,
+            data: data,
+            udata: udata,
+        }
+    }
+
+    fn empty() -> kevent {
+        kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: ptr::null::<c_void>(),
+        }
+    }
 }
 
 struct NativePath {
@@ -116,9 +207,12 @@ impl KQueue {
         Ok(KQueue { fd: fd })
     }
 
-    fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: &Timespec) -> i32 {
+    fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: &Option<Timespec>) -> i32 {
         unsafe {
-            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, timeout)
+            match *timeout {
+                Some(ref v) => kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, v),
+                None        => kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, ptr::null::<Timespec>()),
+            }
         }
     }
 }
@@ -127,30 +221,6 @@ impl Drop for KQueue {
     fn drop(&mut self) {
         unsafe {
             close(self.fd);
-        }
-    }
-}
-
-impl kevent {
-    fn new(path: &NativePath, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags, data: intptr_t, udata: *const c_void) -> kevent {
-        kevent {
-            ident: path.fd as u64,
-            filter: filter as i16,
-            flags: flags.bits() as u16,
-            fflags: fflags.bits() as u32,
-            data: data,
-            udata: udata,
-        }
-    }
-
-    fn empty() -> kevent {
-        kevent {
-            ident: 0,
-            filter: 0,
-            flags: 0,
-            fflags: 0,
-            data: 0,
-            udata: ptr::null::<c_void>(),
         }
     }
 }
@@ -197,12 +267,11 @@ mod test {
         let mut queue = KQueue::new().unwrap();
 
         let ievents = [
-            kevent::new(&ntmp, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+            kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
         ];
         let mut oevents: [kevent, ..0] = [];
-        let timeout = Timespec::new(0, 0);
 
-        let n = queue.process(&ievents, &mut oevents, &timeout);
+        let n = queue.process(&ievents, &mut oevents, &None);
 
         assert_eq!(0, n);
 
@@ -212,7 +281,7 @@ mod test {
         let ievents = [];
         let mut oevents: [kevent, ..1] = [kevent::empty()];
 
-        let n = queue.process(&ievents, &mut oevents, &timeout);
+        let n = queue.process(&ievents, &mut oevents, &None);
 
         assert_eq!(1, n);
         let actual = oevents[0];
@@ -231,11 +300,11 @@ mod test {
 
     #[test]
     fn create_single_file() {
-        let tmp = TempDir::new("create-single").unwrap();
+        let tmp = TempDir::new("create-single-file").unwrap();
         let path = tmp.path().join("file.log");
 
-        let mut watcher = Watcher::new().unwrap();
-        watcher.watch(tmp.path().clone());
+        let mut watcher = Watcher::new();
+        watcher.watch(path.clone());
 
         timer::sleep(Duration::milliseconds(50));
 
@@ -248,6 +317,26 @@ mod test {
             _ => { fail!("Expected `Create` event") }
         }
     }
+
+//    #[test]
+//    fn create_single_file_in_directory() {
+//        let tmp = TempDir::new("create-single").unwrap();
+//        let path = tmp.path().join("file.log");
+
+//        let mut watcher = Watcher::new().unwrap();
+//        watcher.watch(tmp.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        File::create(&path).unwrap();
+
+//        match watcher.rx.recv() {
+//            Create(p) => {
+//                assert_eq!(b"file.log", p.filename().unwrap())
+//            }
+//            _ => { fail!("Expected `Create` event") }
+//        }
+//    }
 
 //    #[test]
 //    fn remove_single_file() {
