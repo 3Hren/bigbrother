@@ -144,7 +144,11 @@ bitflags! {
         const NOTE_DELETE   = 0x00000001,
         const NOTE_WRITE    = 0x00000002,
         const NOTE_EXTEND   = 0x00000004,
+        const NOTE_ATTRIB   = 0x00000008,
+        const NOTE_LINK     = 0x00000010,
         const NOTE_RENAME   = 0x00000020,
+        const NOTE_REVOKE   = 0x00000040,
+        const NOTE_NONE     = 0x00000080,
         const NOTE_TRIGGER  = 0x01000000,
     }
 }
