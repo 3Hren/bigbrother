@@ -106,6 +106,18 @@ impl Watcher {
             debug!("process: {}", n);
             for i in range(0, n as uint) {
                 let ev = output[i];
+                // fd -> path.
+                // path is file?
+                //  + > match event:
+                //      - create:
+                //          unreachable,
+                //      - read:
+                //          unreachable,
+                //      - modify (data or meta):
+                //          tx.send,
+                //      - remove:
+                //          tx.send
+                //          remove from hashmap.
                 debug!(" - p: {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags);
             }
         }
