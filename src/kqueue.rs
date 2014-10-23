@@ -100,7 +100,7 @@ impl Watcher {
             }
 
             let input = [];
-            let mut output: [kevent, ..1] = [kevent::empty()];
+            let mut output: [kevent, ..1] = [kevent::invalid()];
 
             let n = queue.process(&input, &mut output, &Some(timeout));
             debug!("process: {}", n);
@@ -171,15 +171,8 @@ impl kevent {
         }
     }
 
-    fn empty() -> kevent {
-        kevent {
-            ident: 0,
-            filter: 0,
-            flags: 0,
-            fflags: 0,
-            data: 0,
-            udata: ptr::null::<c_void>(),
-        }
+    fn invalid() -> kevent {
+        kevent::new(0, EVFILT_USER, EventFlags::empty(), EventFilterFlags::empty(), 0, ptr::null::<c_void>())
     }
 }
 
@@ -297,7 +290,7 @@ mod test {
         File::create(&path).unwrap();
 
         let ievents = [];
-        let mut oevents: [kevent, ..1] = [kevent::empty()];
+        let mut oevents: [kevent, ..1] = [kevent::invalid()];
 
         let n = queue.process(&ievents, &mut oevents, &None);
 
