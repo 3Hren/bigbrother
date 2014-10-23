@@ -23,6 +23,7 @@ enum Control {
     Exit,
 }
 
+// Можно регистрировать.
 pub struct Watcher {
     fd: i32,
     pub rx: Receiver<Event>,
@@ -52,6 +53,10 @@ impl Watcher {
     pub fn watch(&mut self, path: Path) {
         debug!("Adding {} to the watcher", path.display());
 
+        // Путь существует?
+        //  + > Записать в очередь событие.
+        //      Разбудить kqueue.
+        //  - > Вернуть EBADF (PathNotExists).
         self.txc.send(Add(path));
         self.wake();
     }
@@ -63,11 +68,18 @@ impl Watcher {
             debug!("Performing next watcher loop iteration ...");
 
             let mut paths = HashMap::new();
-            match rxc.recv() {
+            match rxc.recv() { // Плохо. Поток всегда должен ждать в kevent.
                 Add(path) => {
                     // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
+                    let path = match path.as_str() {
+                        Some(v) => v,
+                        None    => {
+                            warn!("Failed to convert {} path to string", path.display());
+                            continue;
+                        }
+                    };
 
-                    let path = NativePath::new(path.as_str().unwrap()).unwrap(); // TODO: Unsafe.
+                    let path = NativePath::new(path).unwrap(); // TODO: Unsafe.
                     paths.insert(path.fd, path);
 //                    let input = [
 //                        kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
@@ -81,7 +93,6 @@ impl Watcher {
             let mut output: [kevent, ..1] = [kevent::empty()];
 
             let n = queue.process(&input, &mut output, &None);
-            // Если user событие, то можно
             debug!("=={}", n);
         }
 
@@ -89,6 +100,8 @@ impl Watcher {
     }
 
     fn wake(&self) {
+        // TODO: This is unsafe - kqueue isn't thread safe.
+        // I should send `Exit` message and poll with timeout (10-100ms).
         let input = [
             kevent::new(0, EVFILT_USER, EV_ADD, EventFilterFlags::empty(), 0, ptr::null::<c_void>()),
             kevent::new(0, EVFILT_USER, EventFlags::empty(), NOTE_TRIGGER, 0, ptr::null::<c_void>()),
@@ -261,6 +274,7 @@ mod test {
 
     #[test]
     fn kqueue_create_single_file() {
+        use std::os;
         let tmp = TempDir::new("kqueue-create-single").unwrap();
         let path = tmp.path().join("file.log");
         let ntmp = NativePath::new(tmp.path().as_str().unwrap()).unwrap();
@@ -268,11 +282,12 @@ mod test {
         let mut queue = KQueue::new().unwrap();
 
         let ievents = [
-            kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+            kevent::new(444 as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
         ];
         let mut oevents: [kevent, ..0] = [];
 
         let n = queue.process(&ievents, &mut oevents, &None);
+        error!("{} {}", n, os::error_string(os::errno() as uint));
 
         assert_eq!(0, n);
 
@@ -301,11 +316,11 @@ mod test {
 
     #[test]
     fn create_single_file() {
-        let tmp = TempDir::new("create-single-file").unwrap();
+        let tmp = TempDir::new("create-single").unwrap();
         let path = tmp.path().join("file.log");
 
         let mut watcher = Watcher::new();
-        watcher.watch(path.clone());
+        watcher.watch(tmp.path().clone());
 
         timer::sleep(Duration::milliseconds(50));
 
@@ -318,26 +333,6 @@ mod test {
             _ => { fail!("Expected `Create` event") }
         }
     }
-
-//    #[test]
-//    fn create_single_file_in_directory() {
-//        let tmp = TempDir::new("create-single").unwrap();
-//        let path = tmp.path().join("file.log");
-
-//        let mut watcher = Watcher::new().unwrap();
-//        watcher.watch(tmp.path().clone());
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        File::create(&path).unwrap();
-
-//        match watcher.rx.recv() {
-//            Create(p) => {
-//                assert_eq!(b"file.log", p.filename().unwrap())
-//            }
-//            _ => { fail!("Expected `Create` event") }
-//        }
-//    }
 
 //    #[test]
 //    fn remove_single_file() {
