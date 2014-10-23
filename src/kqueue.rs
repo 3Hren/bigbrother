@@ -90,7 +90,8 @@ impl Watcher {
 
     fn wake(&self) {
         let input = [
-            kevent::new(0, EVFILT_USER, EV_ADD, NOTE_NONE, 0, ptr::null::<c_void>())
+            kevent::new(0, EVFILT_USER, EV_ADD, EventFilterFlags::empty(), 0, ptr::null::<c_void>()),
+            kevent::new(0, EVFILT_USER, EventFlags::empty(), NOTE_TRIGGER, 0, ptr::null::<c_void>()),
         ];
         let mut output: [kevent, ..0] = [];
 
@@ -125,11 +126,11 @@ bitflags! {
 
 bitflags! {
     flags EventFilterFlags: u32 {
-        const NOTE_NONE     = 0x00000000,
         const NOTE_DELETE   = 0x00000001,
         const NOTE_WRITE    = 0x00000002,
         const NOTE_EXTEND   = 0x00000004,
         const NOTE_RENAME   = 0x00000020,
+        const NOTE_TRIGGER  = 0x01000000,
     }
 }
 
