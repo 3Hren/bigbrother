@@ -109,15 +109,23 @@ impl Watcher {
                 // fd -> path.
                 // path is file?
                 //  + > match event:
-                //      - create:
-                //          unreachable,
-                //      - read:
-                //          unreachable,
-                //      - modify (data or meta):
-                //          tx.send,
+                //      - write
+                //          tx.send Modify
+                //      - attrib
+                //          tx.send ModifyAttr
                 //      - remove:
-                //          tx.send
+                //          tx.send Remove
                 //          remove from hashmap.
+                //  - > match event:
+                //      - write
+                //          scan for new files
+                //          allocate events list
+                //          fd contains in `watched` map?
+                //              + > nop
+                //              - > add to `watched` & add to events list
+                //                  tx.send Create
+                //          process events list.
+                //      - remove ...
                 debug!(" - p: {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags);
             }
         }
