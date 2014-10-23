@@ -113,7 +113,7 @@ impl Watcher {
                 //          tx.send Modify
                 //      - attrib
                 //          tx.send ModifyAttr
-                //      - remove:
+                //      - remove
                 //          tx.send Remove
                 //          remove from hashmap.
                 //  - > match event:
@@ -125,7 +125,11 @@ impl Watcher {
                 //              - > add to `watched` & add to events list
                 //                  tx.send Create
                 //          process events list.
-                //      - remove ...
+                //      - attrib
+                //          tx.send ModifyAttr
+                //      - remove
+                //          maybe do nothing with paths, because all files should be evented (?)
+                //          tx.send Remove (dir)
                 debug!(" - p: {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags);
             }
         }
