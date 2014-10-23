@@ -282,7 +282,7 @@ mod test {
         let mut queue = KQueue::new().unwrap();
 
         let ievents = [
-            kevent::new(444 as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+            kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
         ];
         let mut oevents: [kevent, ..0] = [];
 
