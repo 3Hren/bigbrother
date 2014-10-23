@@ -104,10 +104,6 @@ impl Watcher {
 
         debug!("Watcher thread has been stopped");
     }
-
-    fn wake(&self) {
-        self.txc.send(Exit);
-    }
 }
 
 impl Drop for Watcher {
@@ -115,7 +111,6 @@ impl Drop for Watcher {
         debug!("Dropping the watcher");
 
         self.txc.send(Exit);
-        self.wake();
     }
 }
 
