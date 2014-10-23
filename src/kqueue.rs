@@ -70,7 +70,7 @@ impl Watcher {
             let mut paths = HashMap::new();
             match rxc.try_recv() {
                 Ok(value) => {
-                    match(value) {
+                    match value {
                         Add(path) => {
                             // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
                             let path = match path.as_str() {
