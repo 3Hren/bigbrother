@@ -12,7 +12,8 @@ use time::Timespec;
 
 pub enum Event {
     Create(Path),
-    Remove(Path),
+//    Remove(Path),
+    Modify(Path),
 }
 
 #[deriving(Show)]
@@ -76,17 +77,20 @@ impl Watcher {
                             let path = match path.as_str() {
                                 Some(v) => v,
                                 None    => {
-                                    warn!("Failed to convert {} path to string", path.display());
-                                    continue;
+                                    fail!("Failed to convert {} path to string", path.display());
                                 }
                             };
 
-                            let path = NativePath::new(path).unwrap(); // TODO: Unsafe.
-                            paths.insert(path.fd, path);
-        //                    let input = [
-        //                        kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
-        //                    ];
-        //                    let mut output: [kevent, ..0] = [];
+                            let handler = FileHandler::new(path).unwrap(); // TODO: Unsafe.
+                            let fd = handler.fd;
+
+                            paths.insert(fd, handler);
+                            let input = [
+                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+                            ];
+                            let mut output: [kevent, ..0] = [];
+                            let n = queue.process(&input, &mut output, &None);
+                            debug!("add: {} -> {}", fd, n);
                         }
                         Exit => { break }
                     }
@@ -99,11 +103,18 @@ impl Watcher {
             let mut output: [kevent, ..1] = [kevent::empty()];
 
             let n = queue.process(&input, &mut output, &Some(timeout));
-            debug!("=={}", n);
+            debug!("process: {}", n);
+            for i in range(0, n as uint) {
+                let ev = output[i];
+                debug!(" - p: {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags);
+            }
         }
 
         debug!("Watcher thread has been stopped");
     }
+
+//    fn add(mut queue: KQueue, paths: &mut HashMap<i32, FileHandler>, path: Path, tx: Sender<Event>) {
+//    }
 }
 
 impl Drop for Watcher {
@@ -172,12 +183,12 @@ impl kevent {
     }
 }
 
-struct NativePath {
+struct FileHandler {
     fd: i32,
 }
 
-impl NativePath {
-    fn new(path: &str) -> Result<NativePath, i32> {
+impl FileHandler {
+    fn new(path: &str) -> Result<FileHandler, i32> {
         let fd = unsafe {
             open(path.to_c_str().as_ptr(), 0x0000)
         };
@@ -186,11 +197,11 @@ impl NativePath {
             return Err(fd)
         }
 
-        Ok(NativePath { fd: fd })
+        Ok(FileHandler { fd: fd })
     }
 }
 
-impl Drop for NativePath {
+impl Drop for FileHandler {
     fn drop(&mut self) {
         unsafe {
             close(self.fd)
@@ -252,13 +263,13 @@ mod test {
 
     use libc::{c_void};
 
-    use super::{KQueue, kevent, NativePath};
+    use super::{KQueue, kevent, FileHandler};
     use super::{EVFILT_VNODE};
     use super::{EV_ADD};
     use super::{NOTE_WRITE};
     use super::{Watcher,
-        Create,
-//        Modify,
+//        Create,
+        Modify,
 //        Rename,
 //        Remove,
     };
@@ -268,7 +279,7 @@ mod test {
         use std::os;
         let tmp = TempDir::new("kqueue-create-single").unwrap();
         let path = tmp.path().join("file.log");
-        let ntmp = NativePath::new(tmp.path().as_str().unwrap()).unwrap();
+        let ntmp = FileHandler::new(tmp.path().as_str().unwrap()).unwrap();
 
         let mut queue = KQueue::new().unwrap();
 
@@ -306,24 +317,46 @@ mod test {
 //    #[test] watch file when renamed directory.
 
     #[test]
-    fn create_single_file() {
-        let tmp = TempDir::new("create-single").unwrap();
+    fn watch_file_modify_file() {
+        let tmp = TempDir::new("watch_file_modify_file").unwrap();
         let path = tmp.path().join("file.log");
+        let mut file = File::create(&path).unwrap();
 
         let mut watcher = Watcher::new();
-        watcher.watch(tmp.path().clone());
+        watcher.watch(path.clone());
 
         timer::sleep(Duration::milliseconds(50));
 
-        File::create(&path).unwrap();
+        file.write(b"some bytes!\n").unwrap();
+        file.flush().unwrap();
+        file.fsync().unwrap();
 
         match watcher.rx.recv() {
-            Create(p) => {
+            Modify(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _ => { fail!("Expected `Create` event") }
+            _ => { fail!("Expected `Modify` event") }
         }
     }
+//    #[test]
+//    fn create_single_file() {
+//        let tmp = TempDir::new("create-single").unwrap();
+//        let path = tmp.path().join("file.log");
+
+//        let mut watcher = Watcher::new();
+//        watcher.watch(tmp.path().clone());
+
+//        timer::sleep(Duration::milliseconds(50));
+
+//        File::create(&path).unwrap();
+
+//        match watcher.rx.recv() {
+//            Create(p) => {
+//                assert_eq!(b"file.log", p.filename().unwrap())
+//            }
+//            _ => { fail!("Expected `Create` event") }
+//        }
+//    }
 
 //    #[test]
 //    fn remove_single_file() {
