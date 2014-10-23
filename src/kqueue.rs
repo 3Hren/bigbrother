@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::io::fs::PathExtensions;
 use std::ptr;
 
+use sync::comm::{Empty, Disconnected};
+
 use libc::{c_void, c_int, uintptr_t, intptr_t};
 
 use time::Timespec;
@@ -25,7 +27,6 @@ enum Control {
 
 // Можно регистрировать.
 pub struct Watcher {
-    fd: i32,
     pub rx: Receiver<Event>,
     txc: Sender<Control>,
 }
@@ -37,14 +38,12 @@ impl Watcher {
             Err(err)  => fail!(err)
         };
 
-        let fd = queue.fd;
         let (tx, rx) = channel();
         let (txc, rxc) = channel();
 
         spawn(proc() Watcher::run(queue, tx, rxc));
 
         Watcher {
-            fd: fd,
             rx: rx,
             txc: txc,
         }
@@ -58,41 +57,48 @@ impl Watcher {
         //      Разбудить kqueue.
         //  - > Вернуть EBADF (PathNotExists).
         self.txc.send(Add(path));
-        self.wake();
     }
 
     fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
         debug!("Starting watcher thread ...");
 
+        let timeout = Timespec::new(0, 100e6f32 as i32);
+
         loop {
             debug!("Performing next watcher loop iteration ...");
 
             let mut paths = HashMap::new();
-            match rxc.recv() { // Плохо. Поток всегда должен ждать в kevent.
-                Add(path) => {
-                    // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
-                    let path = match path.as_str() {
-                        Some(v) => v,
-                        None    => {
-                            warn!("Failed to convert {} path to string", path.display());
-                            continue;
-                        }
-                    };
+            match rxc.try_recv() {
+                Ok(value) => {
+                    match(value) {
+                        Add(path) => {
+                            // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
+                            let path = match path.as_str() {
+                                Some(v) => v,
+                                None    => {
+                                    warn!("Failed to convert {} path to string", path.display());
+                                    continue;
+                                }
+                            };
 
-                    let path = NativePath::new(path).unwrap(); // TODO: Unsafe.
-                    paths.insert(path.fd, path);
-//                    let input = [
-//                        kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
-//                    ];
-//                    let mut output: [kevent, ..0] = [];
+                            let path = NativePath::new(path).unwrap(); // TODO: Unsafe.
+                            paths.insert(path.fd, path);
+        //                    let input = [
+        //                        kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+        //                    ];
+        //                    let mut output: [kevent, ..0] = [];
+                        }
+                        Exit => { break }
+                    }
                 }
-                Exit => break
+                Err(Empty) => {}
+                Err(Disconnected) => { break }
             }
 
             let input = [];
             let mut output: [kevent, ..1] = [kevent::empty()];
 
-            let n = queue.process(&input, &mut output, &None);
+            let n = queue.process(&input, &mut output, &Some(timeout));
             debug!("=={}", n);
         }
 
@@ -100,17 +106,7 @@ impl Watcher {
     }
 
     fn wake(&self) {
-        // TODO: This is unsafe - kqueue isn't thread safe.
-        // I should send `Exit` message and poll with timeout (10-100ms).
-        let input = [
-            kevent::new(0, EVFILT_USER, EV_ADD, EventFilterFlags::empty(), 0, ptr::null::<c_void>()),
-            kevent::new(0, EVFILT_USER, EventFlags::empty(), NOTE_TRIGGER, 0, ptr::null::<c_void>()),
-        ];
-        let mut output: [kevent, ..0] = [];
-
-        unsafe {
-            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, ptr::null::<Timespec>())
-        };
+        self.txc.send(Exit);
     }
 }
 
