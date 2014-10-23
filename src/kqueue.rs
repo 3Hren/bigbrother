@@ -86,7 +86,7 @@ impl Watcher {
 
                             paths.insert(fd, handler);
                             let input = [
-                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE)
                             ];
                             let mut output: [kevent, ..0] = [];
                             let n = queue.process(&input, &mut output, &None);
@@ -160,7 +160,15 @@ struct kevent {
 }
 
 impl kevent {
-    fn new(ident: u64, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags, data: intptr_t, udata: *const c_void) -> kevent {
+    fn new(ident: u64, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags) -> kevent {
+        kevent::raw(ident, filter, flags, fflags, 0, ptr::null::<c_void>())
+    }
+
+    fn invalid() -> kevent {
+        kevent::new(0, EVFILT_USER, EventFlags::empty(), EventFilterFlags::empty())
+    }
+
+    fn raw(ident: u64, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags, data: intptr_t, udata: *const c_void) -> kevent {
         kevent {
             ident: ident,
             filter: filter as i16,
@@ -169,10 +177,6 @@ impl kevent {
             data: data,
             udata: udata,
         }
-    }
-
-    fn invalid() -> kevent {
-        kevent::new(0, EVFILT_USER, EventFlags::empty(), EventFilterFlags::empty(), 0, ptr::null::<c_void>())
     }
 }
 
@@ -277,7 +281,7 @@ mod test {
         let mut queue = KQueue::new().unwrap();
 
         let ievents = [
-            kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE, 0, ptr::null::<c_void>())
+            kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE)
         ];
         let mut oevents: [kevent, ..0] = [];
 
