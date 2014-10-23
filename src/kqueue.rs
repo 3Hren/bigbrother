@@ -254,11 +254,6 @@ mod test {
     use std::io::{File, TempDir};
     use std::io::timer;
     use std::time::Duration;
-    use std::ptr;
-
-    use time::Timespec;
-
-    use libc::{c_void};
 
     use super::{KQueue, kevent, FileHandler};
     use super::{EVFILT_VNODE};
