@@ -50,7 +50,7 @@ impl Watcher {
     }
 
     pub fn watch(&mut self, path: Path) {
-        debug!("Adding {} to the watcher", path.as_str());
+        debug!("Adding {} to the watcher", path.display());
 
         self.txc.send(Add(path));
         self.wake();
