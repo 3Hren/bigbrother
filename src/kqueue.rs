@@ -74,13 +74,6 @@ impl Watcher {
                     match value {
                         Add(path) => {
                             // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
-                            let path = match path.as_str() {
-                                Some(v) => v,
-                                None    => {
-                                    fail!("Failed to convert {} path to string", path.display());
-                                }
-                            };
-
                             let handler = FileHandler::new(path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
 
@@ -102,11 +95,28 @@ impl Watcher {
             let input = [];
             let mut output: [kevent, ..1] = [kevent::invalid()];
 
-            let n = queue.process(&input, &mut output, &Some(timeout));
+            let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
             debug!("process: {}", n);
-            for i in range(0, n as uint) {
-                let ev = output[i];
-                // fd -> path.
+            for ev in output[..n].iter() {
+                let fd = ev.ident as i32;
+                let path = match paths.find(&fd) {
+                    Some(v) => v.path.clone(),
+                    None => {
+                        warn!("Received unregistered event on {} fd - ignoring", ev.ident);
+                        continue;
+                    }
+                };
+
+                if path.is_file() {
+                    debug!("is file");
+                    if ev.filter & EVFILT_VNODE as i16 == EVFILT_VNODE as i16 {
+                        debug!("1");
+                        if ev.fflags & NOTE_WRITE.bits() == NOTE_WRITE.bits() {
+                            debug!("2");
+                            tx.send(Modify(path.clone()));
+                        }
+                    }
+                }
                 // path is file?
                 //  + > match event:
                 //      - write
@@ -210,19 +220,32 @@ impl kevent {
 
 struct FileHandler {
     fd: i32,
+    path: Path,
 }
 
 impl FileHandler {
-    fn new(path: &str) -> Result<FileHandler, i32> {
+    fn new(path: Path) -> Result<FileHandler, i32> {
+        let pathstr = match path.as_str() {
+            Some(v) => v,
+            None => {
+                fail!("Failed to convert {} path to string", path.display());
+            }
+        };
+
         let fd = unsafe {
-            open(path.to_c_str().as_ptr(), 0x0000)
+            open(pathstr.to_c_str().as_ptr(), 0x0000)
         };
 
         if fd < 0 {
             return Err(fd)
         }
 
-        Ok(FileHandler { fd: fd })
+        let fh = FileHandler {
+            fd: fd,
+            path: path.clone(),
+        };
+
+        Ok(fh)
     }
 }
 
@@ -299,7 +322,7 @@ mod test {
         use std::os;
         let tmp = TempDir::new("kqueue-create-single").unwrap();
         let path = tmp.path().join("file.log");
-        let ntmp = FileHandler::new(tmp.path().as_str().unwrap()).unwrap();
+        let ntmp = FileHandler::new(tmp.path().clone()).unwrap();
 
         let mut queue = KQueue::new().unwrap();
 
