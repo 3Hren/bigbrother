@@ -12,7 +12,7 @@ use time::Timespec;
 
 pub enum Event {
     Create(Path),
-//    Remove(Path),
+    Remove(Path),
     Modify(Path),
 }
 
@@ -79,7 +79,7 @@ impl Watcher {
 
                             paths.insert(fd, handler);
                             let input = [
-                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE)
+                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE)
                             ];
                             let mut output: [kevent, ..0] = [];
                             let n = queue.process(&input, &mut output, &None);
@@ -313,7 +313,7 @@ mod test {
 //        Create,
         Modify,
 //        Rename,
-//        Remove,
+        Remove,
     };
 
     #[test]
@@ -378,6 +378,29 @@ mod test {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
             _ => { fail!("Expected `Modify` event") }
+        }
+    }
+
+    #[test]
+    fn watch_file_remove_file() {
+        use std::io::fs;
+
+        let tmp = TempDir::new("watch_file_remove_file").unwrap();
+        let path = tmp.path().join("file.log");
+        File::create(&path).unwrap();
+
+        let mut watcher = Watcher::new();
+        watcher.watch(path.clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::unlink(&path).unwrap();
+
+        match watcher.rx.recv() {
+            Remove(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap())
+            }
+            _ => { fail!("Expected `Remove` event") }
         }
     }
 //    #[test]
