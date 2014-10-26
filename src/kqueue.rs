@@ -98,9 +98,10 @@ impl Watcher {
             let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
             debug!("process: {}", n);
             for ev in output[..n].iter() {
+                debug!(" - {} {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
-                let path = match paths.find(&fd) {
-                    Some(v) => v.path.clone(),
+                let handler = match paths.find(&fd) {
+                    Some(v) => v,
                     None => {
                         warn!("Received unregistered event on {} fd - ignoring", ev.ident);
                         continue;
@@ -111,9 +112,18 @@ impl Watcher {
                     warn!("Received non vnode event - ignoring");
                 }
 
-                if path.is_file() {
-                    if ev.fflags & NOTE_WRITE.bits() == NOTE_WRITE.bits() {
-                        tx.send(Modify(path.clone()));
+                let path = handler.path.clone();
+                if handler.is_file {
+                    match ev.fflags {
+                        x if x & NOTE_WRITE.bits() == NOTE_WRITE.bits() => {
+                            debug!("YAW");
+                            tx.send(Modify(path));
+                        }
+                        x if x & NOTE_DELETE.bits() == NOTE_DELETE.bits() => {
+                            debug!("WYAW");
+                            tx.send(Remove(path));
+                        }
+                        _ => {}
                     }
                 }
                 // path is file?
@@ -125,6 +135,7 @@ impl Watcher {
                 //      - remove
                 //          tx.send Remove
                 //          remove from hashmap.
+                //      - rename
                 //  - > match event:
                 //      - write
                 //          scan for new files
@@ -139,7 +150,6 @@ impl Watcher {
                 //      - remove
                 //          maybe do nothing with paths, because all files should be evented (?)
                 //          tx.send Remove (dir)
-                debug!(" - p: {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags);
             }
         }
 
@@ -219,6 +229,7 @@ impl kevent {
 
 struct FileHandler {
     fd: i32,
+    is_file: bool,
     path: Path,
 }
 
@@ -241,6 +252,7 @@ impl FileHandler {
 
         let fh = FileHandler {
             fd: fd,
+            is_file: path.is_file(),
             path: path.clone(),
         };
 
@@ -313,12 +325,7 @@ mod test {
     use super::{EVFILT_VNODE};
     use super::{EV_ADD};
     use super::{NOTE_WRITE};
-    use super::{Watcher,
-//        Create,
-        Modify,
-//        Rename,
-        Remove,
-    };
+    use super::{Watcher, Modify, Rename, Remove};
 
     #[test]
     fn kqueue_create_single_file() {
