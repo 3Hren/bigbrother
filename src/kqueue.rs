@@ -329,12 +329,12 @@ mod test {
 
         let mut queue = KQueue::new().unwrap();
 
-        let ievents = [
+        let input = [
             kevent::new(ntmp.fd as u64, EVFILT_VNODE, EV_ADD, NOTE_WRITE)
         ];
-        let mut oevents: [kevent, ..0] = [];
+        let mut output: [kevent, ..0] = [];
 
-        let n = queue.process(&ievents, &mut oevents, &None);
+        let n = queue.process(&input, &mut output, &None);
         error!("{} {}", n, os::error_string(os::errno() as uint));
 
         assert_eq!(0, n);
@@ -342,13 +342,13 @@ mod test {
         timer::sleep(Duration::milliseconds(50));
         File::create(&path).unwrap();
 
-        let ievents = [];
-        let mut oevents: [kevent, ..1] = [kevent::invalid()];
+        let input = [];
+        let mut output: [kevent, ..1] = [kevent::invalid()];
 
-        let n = queue.process(&ievents, &mut oevents, &None);
+        let n = queue.process(&input, &mut output, &None);
 
         assert_eq!(1, n);
-        let actual = oevents[0];
+        let actual = output[0];
         assert_eq!(ntmp.fd as u64, actual.ident);
         assert_eq!(EVFILT_VNODE as i16, actual.filter);
         assert_eq!(EV_ADD.bits(), actual.flags);
