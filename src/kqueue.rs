@@ -107,14 +107,13 @@ impl Watcher {
                     }
                 };
 
+                if ev.filter & EVFILT_VNODE as i16 != EVFILT_VNODE as i16 {
+                    warn!("Received non vnode event - ignoring");
+                }
+
                 if path.is_file() {
-                    debug!("is file");
-                    if ev.filter & EVFILT_VNODE as i16 == EVFILT_VNODE as i16 {
-                        debug!("1");
-                        if ev.fflags & NOTE_WRITE.bits() == NOTE_WRITE.bits() {
-                            debug!("2");
-                            tx.send(Modify(path.clone()));
-                        }
+                    if ev.fflags & NOTE_WRITE.bits() == NOTE_WRITE.bits() {
+                        tx.send(Modify(path.clone()));
                     }
                 }
                 // path is file?
