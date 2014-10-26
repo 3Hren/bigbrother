@@ -267,7 +267,11 @@ impl KQueue {
             return Err(UnableToCreateKQueue)
         }
 
-        Ok(KQueue { fd: fd })
+        let kq = KQueue {
+            fd: fd
+        };
+
+        Ok(kq)
     }
 
     fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: &Option<Timespec>) -> i32 {
