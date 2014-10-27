@@ -62,7 +62,7 @@ impl Watcher {
     fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
         debug!("Starting watcher thread ...");
 
-        let period: f64 = 100.0e6;
+        let period: f32 = 0.1e9;
         let timeout = Timespec::new(0, period as i32);
 
         loop {
