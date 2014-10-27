@@ -14,6 +14,7 @@ pub enum Event {
     Create(Path),
     Remove(Path),
     Modify(Path),
+    Rename(Path, Path),
 }
 
 #[deriving(Show)]
@@ -79,7 +80,7 @@ impl Watcher {
 
                             paths.insert(fd, handler);
                             let input = [
-                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE)
+                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                             ];
                             let mut output: [kevent, ..0] = [];
                             let n = queue.process(&input, &mut output, &None);
@@ -96,12 +97,12 @@ impl Watcher {
             let mut output: [kevent, ..1] = [kevent::invalid()];
 
             let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
-            debug!("process: {}", n);
+            debug!("Processing {} events ...", n);
             for ev in output[..n].iter() {
-                debug!(" - {} {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
+                debug!(" - event {} {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
-                let handler = match paths.find(&fd) {
-                    Some(v) => v,
+                let helper = match paths.find(&fd) {
+                    Some(v) => v.helper.clone(),
                     None => {
                         warn!("Received unregistered event on {} fd - ignoring", ev.ident);
                         continue;
@@ -110,18 +111,22 @@ impl Watcher {
 
                 if ev.filter & EVFILT_VNODE as i16 != EVFILT_VNODE as i16 {
                     warn!("Received non vnode event - ignoring");
+                    continue;
                 }
 
-                let path = handler.path.clone();
-                if handler.is_file {
+                let path = helper.path.clone();
+                if helper.is_file {
                     match ev.fflags {
                         x if x & NOTE_WRITE.bits() == NOTE_WRITE.bits() => {
-                            debug!("YAW");
                             tx.send(Modify(path));
                         }
                         x if x & NOTE_DELETE.bits() == NOTE_DELETE.bits() => {
-                            debug!("WYAW");
+                            paths.remove(&fd);
                             tx.send(Remove(path));
+                        }
+                        x if x & NOTE_RENAME.bits() == NOTE_RENAME.bits() => {
+                            let new = getpath(fd);
+                            tx.send(Rename(path, new));
                         }
                         _ => {}
                     }
@@ -166,6 +171,19 @@ impl Drop for Watcher {
 
         self.txc.send(Exit);
     }
+}
+
+fn getpath(fd: i32) -> Path {
+    use std::c_str::CString;
+    let path = [0i8, ..1024];
+    unsafe {
+        let res = fcntl(fd, 50, path.as_ptr());
+        assert_eq!(0, res);
+    }
+    let s = unsafe {
+        CString::new(path.as_ptr(), false)
+    };
+    Path::new(s)
 }
 
 #[repr(C)]
@@ -227,10 +245,15 @@ impl kevent {
     }
 }
 
-struct FileHandler {
-    fd: i32,
+#[deriving(Clone)]
+struct Helper {
     is_file: bool,
     path: Path,
+}
+
+struct FileHandler {
+    fd: i32,
+    helper: Helper,
 }
 
 impl FileHandler {
@@ -252,8 +275,10 @@ impl FileHandler {
 
         let fh = FileHandler {
             fd: fd,
-            is_file: path.is_file(),
-            path: path.clone(),
+            helper: Helper {
+                is_file: path.is_file(),
+                path: path.clone(),
+            }
         };
 
         Ok(fh)
@@ -310,6 +335,7 @@ extern {
 
     fn open(path: *const i8, flags: c_int) -> c_int;
     fn close(fd: c_int);
+    fn fcntl(fd: c_int, arg: c_int, path: *const i8) -> c_int;
 }
 
 
@@ -318,6 +344,7 @@ mod test {
     extern crate test;
 
     use std::io::{File, TempDir};
+    use std::io::fs;
     use std::io::timer;
     use std::time::Duration;
 
@@ -394,8 +421,6 @@ mod test {
 
     #[test]
     fn watch_file_remove_file() {
-        use std::io::fs;
-
         let tmp = TempDir::new("watch_file_remove_file").unwrap();
         let path = tmp.path().join("file.log");
         File::create(&path).unwrap();
@@ -412,6 +437,28 @@ mod test {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
             _ => { fail!("Expected `Remove` event") }
+        }
+    }
+
+    #[test]
+    fn watch_file_rename_file() {
+        let tmp = TempDir::new("watch_file_rename_file").unwrap();
+        let path = tmp.path().join("file.log");
+        File::create(&path).unwrap();
+
+        let mut watcher = Watcher::new();
+        watcher.watch(path.clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::rename(&path, &tmp.path().join("file-new.log")).unwrap();
+
+        match watcher.rx.recv() {
+            Rename(old, new) => {
+                assert_eq!(b"file.log", old.filename().unwrap())
+                assert_eq!(b"file-new.log", new.filename().unwrap())
+            }
+            _ => { fail!("Expected `Rename` event") }
         }
     }
 //    #[test]
