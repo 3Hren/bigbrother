@@ -27,7 +27,6 @@ enum Control {
     Exit,
 }
 
-// Можно регистрировать.
 pub struct Watcher {
     pub rx: Receiver<Event>,
     txc: Sender<Control>,
@@ -54,10 +53,9 @@ impl Watcher {
     pub fn watch(&mut self, path: Path) {
         debug!("Adding {} to the watcher", path.display());
 
-        // Путь существует?
-        //  + > Записать в очередь событие.
-        //      Разбудить kqueue.
-        //  - > Вернуть EBADF (PathNotExists).
+        // TODO: Path exists?
+        //  + > Send
+        //  - > Return EBADF (PathNotExists).
         self.txc.send(Add(path));
     }
 
@@ -74,7 +72,10 @@ impl Watcher {
                 Ok(value) => {
                     match value {
                         Add(path) => {
-                            // Path - файл, то тупо добавить его. Если каталог - добавить все файлы в каталоге. Симлинк - следовать.
+                            // TODO: Path:
+                            //   - file -> add it
+                            //   - dir -> add all paths
+                            //   - symlink -> follow.
                             let handler = FileHandler::new(path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
 
@@ -126,35 +127,27 @@ impl Watcher {
                         }
                         x if x & NOTE_RENAME.bits() == NOTE_RENAME.bits() => {
                             let new = getpath(fd);
+                            // TODO: Update new info.
                             tx.send(Rename(path, new));
                         }
+                        // TODO: ModifyAttr
                         _ => {}
                     }
+                } else {
+                    // TODO: Write - new file has been created (or any action with files within directory?)
+                    //   Scan for new files
+                    //   Allocate events list
+                    //   An fd contains in `watched` map?
+                    //     + > nop
+                    //     - > add to `watched` & add to events list
+                    //       tx.send Create
+                    //   Process events list.
+
+                    // TODO: Remove
+                    //   Maybe do nothing with paths, because all files should be evented?
+                    // TODO: Rename
+                    // TODO: ModifyAttr
                 }
-                // path is file?
-                //  + > match event:
-                //      - write
-                //          tx.send Modify
-                //      - attrib
-                //          tx.send ModifyAttr
-                //      - remove
-                //          tx.send Remove
-                //          remove from hashmap.
-                //      - rename
-                //  - > match event:
-                //      - write
-                //          scan for new files
-                //          allocate events list
-                //          fd contains in `watched` map?
-                //              + > nop
-                //              - > add to `watched` & add to events list
-                //                  tx.send Create
-                //          process events list.
-                //      - attrib
-                //          tx.send ModifyAttr
-                //      - remove
-                //          maybe do nothing with paths, because all files should be evented (?)
-                //          tx.send Remove (dir)
             }
         }
 
