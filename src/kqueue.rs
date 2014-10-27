@@ -68,25 +68,29 @@ impl Watcher {
         loop {
             debug!("Performing next watcher loop iteration ...");
 
+            let mut fds = HashMap::new();
             let mut paths = HashMap::new();
             match rxc.try_recv() {
                 Ok(value) => {
                     match value {
                         Add(path) => {
+                            debug!("Adding '{}' ...", path.display());
                             // TODO: Path:
                             //   - file -> add it
                             //   - dir -> add all paths
                             //   - symlink -> follow.
-                            let handler = FileHandler::new(path).unwrap(); // TODO: Unsafe.
+                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
 
-                            paths.insert(fd, handler);
+                            fds.insert(fd, handler);
+                            let isfile = path.is_file();
+                            paths.insert(fd, (path, isfile));
                             let input = [
                                 kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                             ];
                             let mut output: [kevent, ..0] = [];
                             let n = queue.process(&input, &mut output, &None);
-                            debug!("add: {} -> {}", fd, n);
+                            debug!("Adding result ({}): {}", fd, n);
                         }
                         Exit => { break }
                     }
@@ -103,8 +107,8 @@ impl Watcher {
             for ev in output[..n].iter() {
                 debug!(" - event {} {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
-                let helper = match paths.find(&fd) {
-                    Some(v) => v.helper.clone(),
+                let (path, isfile) = match paths.find(&fd) {
+                    Some(v) => v.clone(),
                     None => {
                         warn!("Received unregistered event on {} fd - ignoring", ev.ident);
                         continue;
@@ -116,13 +120,13 @@ impl Watcher {
                     continue;
                 }
 
-                let path = helper.path.clone();
-                if helper.is_file {
+                if isfile {
                     match ev.fflags {
                         x if x & NOTE_WRITE.bits() == NOTE_WRITE.bits() => {
                             tx.send(Modify(path));
                         }
                         x if x & NOTE_DELETE.bits() == NOTE_DELETE.bits() => {
+                            fds.remove(&fd);
                             paths.remove(&fd);
                             tx.send(Remove(path));
                         }
@@ -239,19 +243,13 @@ impl kevent {
     }
 }
 
-#[deriving(Clone)]
-struct Helper {
-    is_file: bool,
-    path: Path,
-}
-
+// RAII wrapper for read-only file descriptor.
 struct FileHandler {
     fd: i32,
-    helper: Helper,
 }
 
 impl FileHandler {
-    fn new(path: Path) -> Result<FileHandler, i32> {
+    fn new(path: &Path) -> Result<FileHandler, i32> {
         let pathstr = match path.as_str() {
             Some(v) => v,
             None => {
@@ -269,10 +267,6 @@ impl FileHandler {
 
         let fh = FileHandler {
             fd: fd,
-            helper: Helper {
-                is_file: path.is_file(),
-                path: path.clone(),
-            }
         };
 
         Ok(fh)
@@ -353,7 +347,7 @@ mod test {
         use std::os;
         let tmp = TempDir::new("kqueue-create-single").unwrap();
         let path = tmp.path().join("file.log");
-        let ntmp = FileHandler::new(tmp.path().clone()).unwrap();
+        let ntmp = FileHandler::new(tmp.path()).unwrap();
 
         let mut queue = KQueue::new().unwrap();
 
