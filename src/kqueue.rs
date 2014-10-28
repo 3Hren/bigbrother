@@ -405,7 +405,7 @@ mod watcher {
     use std::time::Duration;
 
     use super::super::{
-        Watcher, Modify, Rename, Remove
+        Watcher, Create, Modify, Rename, Remove,
     };
 
     #[test]
@@ -473,25 +473,26 @@ mod watcher {
             _ => { fail!("Expected `Rename` event") }
         }
     }
-//    #[test]
-//    fn create_single_file() {
-//        let tmp = TempDir::new("create-single").unwrap();
-//        let path = tmp.path().join("file.log");
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp.path().clone());
+    #[test]
+    fn watch_dir_create_single_file() {
+        let tmp = TempDir::new("watch_dir_create_single_file").unwrap();
+        let path = tmp.path().join("file.log");
 
-//        timer::sleep(Duration::milliseconds(50));
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
 
-//        File::create(&path).unwrap();
+        timer::sleep(Duration::milliseconds(50));
 
-//        match watcher.rx.recv() {
-//            Create(p) => {
-//                assert_eq!(b"file.log", p.filename().unwrap())
-//            }
-//            _ => { fail!("Expected `Create` event") }
-//        }
-//    }
+        File::create(&path).unwrap();
+
+        match watcher.rx.recv() {
+            Create(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap())
+            }
+            _ => { fail!("Expected `Create` event") }
+        }
+    }
 
 //    #[test]
 //    fn remove_single_file() {
