@@ -106,7 +106,7 @@ impl Watcher {
             let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
             debug!("Processing {} events ...", n);
             for ev in output[..n].iter() {
-                debug!(" - event {} {} {} {} {} {}", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
+                debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
                 let (path, isfile) = match paths.find(&fd) {
                     Some(v) => v.clone(),
