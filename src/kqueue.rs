@@ -330,18 +330,20 @@ extern {
 
 #[cfg(test)]
 mod test {
+
+mod kqueue {
     extern crate test;
 
     use std::io::{File, TempDir};
-    use std::io::fs;
     use std::io::timer;
     use std::time::Duration;
 
-    use super::{KQueue, kevent, FileHandler};
-    use super::{EVFILT_VNODE};
-    use super::{EV_ADD};
-    use super::{NOTE_WRITE};
-    use super::{Watcher, Modify, Rename, Remove};
+    use super::super::{
+        KQueue, kevent, FileHandler,
+        EVFILT_VNODE,
+        EV_ADD,
+        NOTE_WRITE,
+    };
 
     #[test]
     fn kqueue_create_single_file() {
@@ -384,6 +386,20 @@ mod test {
 //    #[test] watch file renamed.
 //    #[test] watch file when removed directory.
 //    #[test] watch file when renamed directory.
+
+} // mod kqueue
+
+mod watcher {
+    extern crate test;
+
+    use std::io::{File, TempDir};
+    use std::io::fs;
+    use std::io::timer;
+    use std::time::Duration;
+
+    use super::super::{
+        Watcher, Modify, Rename, Remove
+    };
 
     #[test]
     fn watch_file_modify_file() {
@@ -664,4 +680,6 @@ mod test {
 //            _ => { fail!("Expected `Rename` event") }
 //        }
 //    }
-}
+} // mod watcher
+
+} // mod test
