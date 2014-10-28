@@ -79,18 +79,19 @@ impl Watcher {
                             //   - file -> add it
                             //   - dir -> add all paths
                             //   - symlink -> follow.
-                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
-                            let fd = handler.fd;
+                            if path.is_file() {
+                                let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
+                                let fd = handler.fd;
 
-                            fds.insert(fd, handler);
-                            let isfile = path.is_file();
-                            paths.insert(fd, (path, isfile));
-                            let input = [
-                                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                            ];
-                            let mut output: [kevent, ..0] = [];
-                            let n = queue.process(&input, &mut output, &None);
-                            debug!("Adding result ({}): {}", fd, n);
+                                fds.insert(fd, handler);
+                                paths.insert(fd, (path, true));
+                                let input = [
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                ];
+                                let mut output: [kevent, ..0] = [];
+                                let n = queue.process(&input, &mut output, &None);
+                                debug!("Adding result ({}): {}", fd, n);
+                            }
                         }
                         Exit => { break }
                     }
