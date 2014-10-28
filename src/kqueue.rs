@@ -116,22 +116,22 @@ impl Watcher {
                     }
                 };
 
-                if ev.filter & EVFILT_VNODE as i16 != EVFILT_VNODE as i16 {
+                if !ev.filter.intersects(EVFILT_VNODE) {
                     warn!("Received non vnode event - ignoring");
                     continue;
                 }
 
                 if isfile {
                     match ev.fflags {
-                        x if x & NOTE_WRITE.bits() == NOTE_WRITE.bits() => {
+                        x if x.intersects(NOTE_WRITE) => {
                             tx.send(Modify(path));
                         }
-                        x if x & NOTE_DELETE.bits() == NOTE_DELETE.bits() => {
+                        x if x.intersects(NOTE_DELETE) => {
                             fds.remove(&fd);
                             paths.remove(&fd);
                             tx.send(Remove(path));
                         }
-                        x if x & NOTE_RENAME.bits() == NOTE_RENAME.bits() => {
+                        x if x.intersects(NOTE_RENAME) => {
                             let new = getpath(fd);
                             // TODO: Update new info.
                             tx.send(Rename(path, new));
@@ -185,13 +185,18 @@ fn getpath(fd: i32) -> Path {
     Path::new(s)
 }
 
-#[repr(C)]
-enum EventFilter {
-    EVFILT_VNODE = -4,
-    EVFILT_USER  = -10,
+bitflags! {
+    #[repr(C)]
+    #[deriving(Show)]
+    flags EventFilter: i16 {
+        const EVFILT_VNODE = -4,
+        const EVFILT_USER  = -10,
+    }
 }
 
 bitflags! {
+    #[repr(C)]
+    #[deriving(Show)]
     flags EventFlags: u16 {
         const EV_ADD    = 0x0001,
         const EV_ENABLE = 0x0004,
@@ -200,6 +205,8 @@ bitflags! {
 }
 
 bitflags! {
+    #[repr(C)]
+    #[deriving(Show)]
     flags EventFilterFlags: u32 {
         const NOTE_DELETE   = 0x00000001,
         const NOTE_WRITE    = 0x00000002,
@@ -215,12 +222,12 @@ bitflags! {
 
 #[repr(C)]
 struct kevent {
-    ident: uintptr_t,       // Identifier for this event.
-    filter: i16,            // Filter for event.
-    flags: u16,             // General flags.
-    fflags: u32,            // Filter-specific flags.
-    data: intptr_t,         // Filter-specific data.
-    udata: *const c_void,   // Opaque user data identifier.
+    ident: uintptr_t,           // Identifier for this event.
+    filter: EventFilter,        // Filter for event.
+    flags: EventFlags,          // General flags.
+    fflags: EventFilterFlags,   // Filter-specific flags.
+    data: intptr_t,             // Filter-specific data.
+    udata: *const c_void,       // Opaque user data identifier.
 }
 
 impl kevent {
@@ -235,9 +242,9 @@ impl kevent {
     fn raw(ident: u64, filter: EventFilter, flags: EventFlags, fflags: EventFilterFlags, data: intptr_t, udata: *const c_void) -> kevent {
         kevent {
             ident: ident,
-            filter: filter as i16,
-            flags: flags.bits() as u16,
-            fflags: fflags.bits() as u32,
+            filter: filter,
+            flags: flags,
+            fflags: fflags,
             data: data,
             udata: udata,
         }
@@ -375,9 +382,9 @@ mod kqueue {
         assert_eq!(1, n);
         let actual = output[0];
         assert_eq!(ntmp.fd as u64, actual.ident);
-        assert_eq!(EVFILT_VNODE as i16, actual.filter);
-        assert_eq!(EV_ADD.bits(), actual.flags);
-        assert_eq!(NOTE_WRITE.bits(), actual.fflags);
+        assert_eq!(EVFILT_VNODE, actual.filter);
+        assert_eq!(EV_ADD, actual.flags);
+        assert_eq!(NOTE_WRITE, actual.fflags);
     }
 
 //    #[test] watch file modified.
