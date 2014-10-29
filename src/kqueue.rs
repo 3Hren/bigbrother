@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
+use std::io::fs;
 use std::io::fs::PathExtensions;
 use std::ptr;
 
@@ -70,27 +71,56 @@ impl Watcher {
 
             let mut fds = HashMap::new();
             let mut paths = HashMap::new();
+            let mut nodes = HashMap::new();
             match rxc.try_recv() {
                 Ok(value) => {
                     match value {
                         Add(path) => {
-                            debug!("Adding '{}' ...", path.display());
+                            debug!("Trying to add '{}' ...", path.display());
                             // TODO: Path:
                             //   - file -> add it
                             //   - dir -> add all paths
                             //   - symlink -> follow.
-                            if path.is_file() {
-                                let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
-                                let fd = handler.fd;
+                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
+                            let fd = handler.fd;
 
+                            if path.is_file() {
                                 fds.insert(fd, handler);
                                 paths.insert(fd, (path, true));
                                 let input = [
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 ];
+
                                 let mut output: [kevent, ..0] = [];
                                 let n = queue.process(&input, &mut output, &None);
-                                debug!("Adding result ({}): {}", fd, n);
+                                debug!("Adding {} descriptors: {}", input.len(), n);
+                            } else if path.is_dir() {
+                                fds.insert(fd, handler);
+                                paths.insert(fd, (path.clone(), false));
+                                let mut input = Vec::new();
+                                input.push(
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                );
+
+                                let nodes_ : HashSet<Path> = fs::walk_dir(&path).unwrap().collect(); // TODO: Unsafe.
+                                nodes.insert(path.clone(), nodes_.clone());
+                                for p in nodes_.iter() {
+                                    debug!(" - adding sub '{}' ...", path.display());
+
+//                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
+//                                    let fd = handler.fd;
+//                                    let isfile = p.is_file();
+
+//                                    fds.insert(fd, handler);
+//                                    paths.insert(fd, (p, isfile));
+//                                    input.push(
+//                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+//                                    );
+                                }
+
+                                let mut output: [kevent, ..0] = [];
+                                let n = queue.process(input.as_slice(), &mut output, &None);
+                                debug!("Adding {} descriptors: {}", input.len(), n);
                             }
                         }
                         Exit => { break }
@@ -137,9 +167,28 @@ impl Watcher {
                             tx.send(Rename(path, new));
                         }
                         // TODO: ModifyAttr
-                        _ => {}
+                        x => {
+                            debug!("Received unintresting {} event - ignoring", x);
+                        }
                     }
                 } else {
+                    match ev.fflags {
+                        x if x.intersects(NOTE_WRITE) => {
+                            match nodes.find(&path) {
+                                Some(v) => {
+                                    let items: HashSet<Path> = fs::walk_dir(&path).unwrap().collect();
+                                    for n in items.difference(v) {
+                                        tx.send(Create(n.clone()));
+                                    }
+                                }
+                                None => {}
+                            }
+//                            tx.send(Modify(path));
+                        }
+                        x => {
+                            debug!("Received unintresting {} event - ignoring", x);
+                        }
+                    }
                     // TODO: Write - new file has been created (or any action with files within directory?)
                     //   Scan for new files
                     //   Allocate events list
