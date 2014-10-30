@@ -164,6 +164,7 @@ impl Watcher {
                         x if x.intersects(NOTE_RENAME) => {
                             let new = getpath(fd);
                             // TODO: Update new info.
+                            // TODO: What if new path is not watched?
                             tx.send(Rename(path, new));
                         }
                         // TODO: ModifyAttr
@@ -180,6 +181,7 @@ impl Watcher {
                                     for n in items.difference(v) {
                                         tx.send(Create(n.clone()));
                                     }
+                                    // TODO: Save new nodes.
                                 }
                                 None => {}
                             }
