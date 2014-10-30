@@ -227,7 +227,7 @@ fn getpath(fd: i32) -> Path {
     use std::c_str::CString;
     let path = [0i8, ..1024];
     unsafe {
-        let res = fcntl(fd, 50, path.as_ptr());
+        let res = fcntl(fd, 50, path.as_ptr()); // TODO: Magic.
         assert_eq!(0, res);
     }
     let s = unsafe {
