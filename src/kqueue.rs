@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
 use std::collections::{HashSet, HashMap};
+use std::io::FileStat;
 use std::io::fs;
 use std::io::fs::PathExtensions;
 use std::ptr;
@@ -27,6 +28,38 @@ enum Control {
     Add(Path),
     Exit,
 }
+
+#[deriving(Clone)]
+struct WatchedFileStat {
+    path: Path,
+//    size: u64,
+//    perm: FilePermission,
+//    created: u64,
+    modified: u64,
+//    accessed: u64,
+//    device: u64,
+    inode: u64,
+//    rdev: u64,
+//    nlink: u64,
+//    uid: u64,
+//    gid: u64,
+//    blksize: u64,
+//    blocks: u64,
+//    flags: u64,
+//    gen: u64,
+}
+
+impl WatchedFileStat {
+    fn new(path: Path, stat: &FileStat) -> WatchedFileStat {
+        WatchedFileStat {
+            path: path,
+            modified: stat.modified,
+            inode: stat.unstable.inode,
+        }
+    }
+}
+
+type FileStatMap = HashMap<u64, WatchedFileStat>;
 
 pub struct Watcher {
     pub rx: Receiver<Event>,
@@ -71,7 +104,8 @@ impl Watcher {
 
             let mut fds = HashMap::new();
             let mut paths = HashMap::new();
-            let mut nodes = HashMap::new();
+            let mut nodes = HashMap::new(); // Set of nodes inside a directory.
+            let mut stats: FileStatMap = HashMap::new();
             match rxc.try_recv() {
                 Ok(value) => {
                     match value {
@@ -106,6 +140,9 @@ impl Watcher {
                                 nodes.insert(path.clone(), nodes_.clone());
                                 for p in nodes_.iter() {
                                     debug!(" - adding sub '{}' ...", p.display());
+
+                                    let stat = p.stat().unwrap();
+                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
 
                                     let handler = FileHandler::new(p).unwrap(); // TODO: Unsafe.
                                     let fd = handler.fd;
@@ -175,17 +212,18 @@ impl Watcher {
                 } else {
                     match ev.fflags {
                         x if x.intersects(NOTE_WRITE) => {
-                            match nodes.find(&path) {
-                                Some(v) => {
-                                    let items: HashSet<Path> = fs::walk_dir(&path).unwrap().collect();
-                                    for n in items.difference(v) {
-                                        tx.send(Create(n.clone()));
-                                    }
-                                    // TODO: Save new nodes.
-                                }
-                                None => {}
+                            debug!("Scanning {}", path.display());
+                            let mut currstats = HashMap::new();
+
+                            for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
+                                let stat = path.stat().unwrap();
+                                debug!("Found {}, {}", path.display(), stat.modified);
+                                currstats.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
                             }
-//                            tx.send(Modify(path));
+
+                            Watcher::created(&stats, &currstats, &tx);
+                            Watcher::modified(&stats, &currstats, &tx);
+                            // TODO: Save new stats.
                         }
                         x => {
                             debug!("Received unintresting {} event - ignoring", x);
@@ -213,6 +251,36 @@ impl Watcher {
 
 //    fn add(mut queue: KQueue, paths: &mut HashMap<i32, FileHandler>, path: Path, tx: Sender<Event>) {
 //    }
+
+    fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in curr.iter() {
+            if !prev.contains_key(inode) {
+                tx.send(Create(stat.path.clone()));
+            }
+        }
+    }
+
+//    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+//        for (inode, stat) in prev.iter() {
+//            if !curr.contains_key(inode) {
+//                tx.send(Remove(stat.path.clone()));
+//            }
+//        }
+//    }
+
+    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in curr.iter() {
+            if let Some(prevstat) = prev.find(inode) {
+                if prevstat.path != stat.path {
+                    tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
+                }
+
+                if prevstat.modified != stat.modified {
+                    tx.send(Modify(stat.path.clone()));
+                }
+            }
+        }
+    }
 }
 
 impl Drop for Watcher {
@@ -385,7 +453,6 @@ extern {
     fn fcntl(fd: c_int, arg: c_int, path: *const i8) -> c_int;
 }
 
-
 #[cfg(test)]
 mod test {
 
@@ -459,6 +526,14 @@ mod watcher {
     use super::super::{
         Watcher, Create, Modify, Rename, Remove,
     };
+
+//file exists and watched -> [modify, remove, rename]
+//dir exists and watched ->
+//    file create, file create + touch other (not duplicate event)
+//    file remove
+//    file rename to watched, to unwatched, from unwatched
+//    dir remove
+//    dir rename
 
     #[test]
     fn watch_file_modify_file() {
@@ -571,31 +646,31 @@ mod watcher {
         }
     }
 
-//    #[test]
-//    fn rename_single_file() {
-//        let tmp = TempDir::new("rename-single").unwrap();
-//        let oldpath = tmp.path().join("file-old.log");
-//        let newpath = tmp.path().join("file-new.log");
+    #[test]
+    fn watch_dir_rename_single_file() {
+        let tmp = TempDir::new("watch_dir_rename_single_file").unwrap();
+        let oldpath = tmp.path().join("file-old.log");
+        let newpath = tmp.path().join("file-new.log");
 
-//        File::create(&oldpath).unwrap();
+        File::create(&oldpath).unwrap();
 
-//        timer::sleep(Duration::milliseconds(50));
+        timer::sleep(Duration::milliseconds(50));
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp.path().clone());
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
 
-//        timer::sleep(Duration::milliseconds(50));
+        timer::sleep(Duration::milliseconds(50));
 
-//        fs::rename(&oldpath, &newpath).unwrap();
+        fs::rename(&oldpath, &newpath).unwrap();
 
-//        match watcher.rx.recv() {
-//            Rename(old, new) => {
-//                assert_eq!(b"file-old.log", old.filename().unwrap());
-//                assert_eq!(b"file-new.log", new.filename().unwrap());
-//            }
-//            _ => { fail!("Expected `Rename` event") }
-//        }
-//    }
+        match watcher.rx.recv() {
+            Rename(old, new) => {
+                assert_eq!(b"file-old.log", old.filename().unwrap());
+                assert_eq!(b"file-new.log", new.filename().unwrap());
+            }
+            _ => { fail!("Expected `Rename` event") }
+        }
+    }
 
 //    #[test]
 //    fn modify_single_file() {
