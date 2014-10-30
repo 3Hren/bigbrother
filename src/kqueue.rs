@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
-use std::collections::{HashSet, HashMap};
+use std::collections::HashMap;
 use std::io::FileStat;
 use std::io::fs;
 use std::io::fs::PathExtensions;
@@ -104,7 +104,6 @@ impl Watcher {
 
             let mut fds = HashMap::new();
             let mut paths = HashMap::new();
-            let mut nodes = HashMap::new(); // Set of nodes inside a directory.
             let mut stats: FileStatMap = HashMap::new();
             match rxc.try_recv() {
                 Ok(value) => {
@@ -136,15 +135,13 @@ impl Watcher {
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 );
 
-                                let nodes_ : HashSet<Path> = fs::walk_dir(&path).unwrap().collect(); // TODO: Unsafe.
-                                nodes.insert(path.clone(), nodes_.clone());
-                                for p in nodes_.iter() {
+                                for p in fs::walk_dir(&path).unwrap() {
                                     debug!(" - adding sub '{}' ...", p.display());
 
                                     let stat = p.stat().unwrap();
                                     stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
 
-                                    let handler = FileHandler::new(p).unwrap(); // TODO: Unsafe.
+                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
                                     let fd = handler.fd;
                                     let isfile = p.is_file();
 
