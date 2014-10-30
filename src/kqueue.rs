@@ -517,17 +517,17 @@ mod watcher {
     use std::io::timer;
     use std::time::Duration;
 
-    use super::super::{
-        Watcher, Create, Modify, Rename, Remove,
-    };
+    use super::super::{Watcher, Create, Modify, Rename, Remove};
 
-//file exists and watched -> [modify, remove, rename]
-//dir exists and watched ->
-//    file create, file create + touch other (not duplicate event)
-//    file remove
-//    file rename to watched, to unwatched, from unwatched
-//    dir remove
-//    dir rename
+//    #[test] watch dir create file
+//    #[test] watch dir remove file
+//    #[test] watch dir rename file inplace
+//    #[test] watch dir rename file to unwatched
+//    #[test] watch dir rename file from unwatched
+//    #[test] watch dir create file, touch other (prevent already events)
+//    #[test] watch dir create file create file
+//    #[test] watch dir rename dir
+//    #[test] watch dir rename dir
 
     #[test]
     fn watch_file_modify_file() {
