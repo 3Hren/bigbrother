@@ -99,12 +99,12 @@ impl Watcher {
         let period: f32 = 0.1e9;
         let timeout = Timespec::new(0, period as i32);
 
+        let mut paths = HashMap::new();
+        let mut stats: FileStatMap = HashMap::new();
         loop {
             debug!("Performing next watcher loop iteration ...");
-
             let mut fds = HashMap::new();
-            let mut paths = HashMap::new();
-            let mut stats: FileStatMap = HashMap::new();
+
             match rxc.try_recv() {
                 Ok(value) => {
                     match value {
