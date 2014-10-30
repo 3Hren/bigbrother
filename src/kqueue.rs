@@ -105,17 +105,17 @@ impl Watcher {
                                 let nodes_ : HashSet<Path> = fs::walk_dir(&path).unwrap().collect(); // TODO: Unsafe.
                                 nodes.insert(path.clone(), nodes_.clone());
                                 for p in nodes_.iter() {
-                                    debug!(" - adding sub '{}' ...", path.display());
+                                    debug!(" - adding sub '{}' ...", p.display());
 
-//                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
-//                                    let fd = handler.fd;
-//                                    let isfile = p.is_file();
+                                    let handler = FileHandler::new(p).unwrap(); // TODO: Unsafe.
+                                    let fd = handler.fd;
+                                    let isfile = p.is_file();
 
-//                                    fds.insert(fd, handler);
-//                                    paths.insert(fd, (p, isfile));
-//                                    input.push(
-//                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-//                                    );
+                                    fds.insert(fd, handler);
+                                    paths.insert(fd, (p.clone(), isfile));
+                                    input.push(
+                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                    );
                                 }
 
                                 let mut output: [kevent, ..0] = [];
@@ -452,6 +452,7 @@ mod watcher {
 
     use std::io::{File, TempDir};
     use std::io::fs;
+    use std::io::fs::PathExtensions;
     use std::io::timer;
     use std::time::Duration;
 
@@ -545,30 +546,30 @@ mod watcher {
         }
     }
 
-//    #[test]
-//    fn remove_single_file() {
-//        let tmp = TempDir::new("remove-single").unwrap();
-//        let path = tmp.path().join("file.log");
+    #[test]
+    fn watch_dir_remove_single_file() {
+        let tmp = TempDir::new("watch_dir_remove_single_file").unwrap();
+        let path = tmp.path().join("file.log");
 
-//        assert!(!path.exists());
-//        File::create(&path).unwrap();
+        assert!(!path.exists());
+        File::create(&path).unwrap();
 
-//        timer::sleep(Duration::milliseconds(50));
+        timer::sleep(Duration::milliseconds(50));
 
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp.path().clone());
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp.path().clone());
 
-//        timer::sleep(Duration::milliseconds(50));
+        timer::sleep(Duration::milliseconds(50));
 
-//        fs::unlink(&path).unwrap();
+        fs::unlink(&path).unwrap();
 
-//        match watcher.rx.recv() {
-//            Remove(p) => {
-//                assert_eq!(b"file.log", p.filename().unwrap())
-//            }
-//            _  => { fail!("Expected `Remove` event") }
-//        }
-//    }
+        match watcher.rx.recv() {
+            Remove(p) => {
+                assert_eq!(b"file.log", p.filename().unwrap())
+            }
+            _  => { fail!("Expected `Remove` event") }
+        }
+    }
 
 //    #[test]
 //    fn rename_single_file() {
