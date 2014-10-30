@@ -110,10 +110,7 @@ impl Watcher {
                     match value {
                         Add(path) => {
                             debug!("Trying to add '{}' ...", path.display());
-                            // TODO: Path:
-                            //   - file -> add it
-                            //   - dir -> add all paths
-                            //   - symlink -> follow.
+                            // TODO: Follow if path - symlink.
                             let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
 
