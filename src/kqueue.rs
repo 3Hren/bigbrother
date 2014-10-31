@@ -5,6 +5,8 @@ use std::io::FileStat;
 use std::io::fs;
 use std::io::fs::PathExtensions;
 use std::ptr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, SeqCst};
 
 use sync::comm::{Empty, Disconnected};
 
@@ -26,7 +28,6 @@ pub enum KQueueError {
 
 enum Control {
     Add(Path),
-    Exit,
 }
 
 #[deriving(Clone)]
@@ -64,6 +65,7 @@ type FileStatMap = HashMap<u64, WatchedFileStat>;
 pub struct Watcher {
     pub rx: Receiver<Event>,
     txc: Sender<Control>,
+    stopped: Arc<AtomicBool>,
 }
 
 impl Watcher {
@@ -75,12 +77,14 @@ impl Watcher {
 
         let (tx, rx) = channel();
         let (txc, rxc) = channel();
-
-        spawn(proc() Watcher::run(queue, tx, rxc));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        spawn(proc() Watcher::run(queue, tx, rxc, flag));
 
         Watcher {
             rx: rx,
             txc: txc,
+            stopped: stopped,
         }
     }
 
@@ -93,17 +97,17 @@ impl Watcher {
         self.txc.send(Add(path));
     }
 
-    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
+    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>, stopped: Arc<AtomicBool>) {
         debug!("Starting watcher thread ...");
 
         let period: f32 = 0.1e9;
         let timeout = Timespec::new(0, period as i32);
 
+        let mut fds = HashMap::new();
         let mut paths = HashMap::new();
         let mut stats: FileStatMap = HashMap::new();
         loop {
             debug!("Performing next watcher loop iteration ...");
-            let mut fds = HashMap::new();
 
             match rxc.try_recv() {
                 Ok(value) => {
@@ -154,7 +158,6 @@ impl Watcher {
                                 debug!("Adding {} descriptors: {}", input.len(), n);
                             }
                         }
-                        Exit => { break }
                     }
                 }
                 Err(Empty) => {}
@@ -165,6 +168,10 @@ impl Watcher {
             let mut output: [kevent, ..1] = [kevent::invalid()];
 
             let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
+            if stopped.load(SeqCst) {
+                break
+            }
+
             debug!("Processing {} events ...", n);
             for ev in output[..n].iter() {
                 debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
@@ -281,7 +288,7 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         debug!("Dropping the watcher");
 
-        self.txc.send(Exit);
+        self.stopped.store(true, SeqCst);
     }
 }
 
