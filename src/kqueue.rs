@@ -193,6 +193,7 @@ impl Watcher {
                     match ev.fflags {
                         x if x.intersects(NOTE_WRITE) => {
                             debug!(" <- Modify: {}", path.display());
+                            // TODO: Seems like I should sync current position with the kevent.
                             tx.send(Modify(path));
                         }
                         x if x.intersects(NOTE_DELETE) => {
