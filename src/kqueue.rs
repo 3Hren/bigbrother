@@ -226,8 +226,9 @@ impl Watcher {
                             }
 
                             Watcher::created(&stats, &currstats, &tx);
-                            Watcher::modified(&stats, &currstats, &tx);
+                            // Watcher::modified(&stats, &currstats, &tx);
                             // TODO: Save new stats.
+                            stats = currstats;
                         }
                         x => {
                             debug!("Received unintresting {} event - ignoring", x);
@@ -272,19 +273,19 @@ impl Watcher {
 //        }
 //    }
 
-    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-        for (inode, stat) in curr.iter() {
-            if let Some(prevstat) = prev.find(inode) {
-                if prevstat.path != stat.path {
-                    tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
-                }
+//    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+//        for (inode, stat) in curr.iter() {
+//            if let Some(prevstat) = prev.find(inode) {
+//                if prevstat.path != stat.path {
+//                    tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
+//                }
 
-                if prevstat.modified != stat.modified {
-                    tx.send(Modify(stat.path.clone()));
-                }
-            }
-        }
-    }
+//                if prevstat.modified != stat.modified {
+//                    tx.send(Modify(stat.path.clone()));
+//                }
+//            }
+//        }
+//    }
 }
 
 impl Drop for Watcher {
