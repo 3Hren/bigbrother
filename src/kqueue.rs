@@ -389,11 +389,11 @@ impl FileHandler {
         };
 
         let fd = unsafe {
-            open(pathstr.to_c_str().as_ptr(), 0x0000)
+            open(pathstr.to_c_str().as_ptr(), 0x0000) // TODO: Magic
         };
 
         if fd < 0 {
-            return Err(fd)
+            return Err(fd) // TODO: Return Enum, not i32.
         }
 
         let fh = FileHandler {
@@ -541,6 +541,11 @@ mod watcher {
 
     #[test]
     fn watch_file_modify_file() {
+        /*
+         * We create temporary directory with single file and register it with
+         * the watcher.
+         * After writing some bytes we expect Modify event to be received.
+         */
         let tmp = TempDir::new("watch_file_modify_file").unwrap();
         let path = tmp.path().join("file.log");
         let mut file = File::create(&path).unwrap();
@@ -676,6 +681,7 @@ mod watcher {
         }
     }
 
+//==============================================================================
 //    #[test]
 //    fn modify_single_file() {
 //        let tmp = TempDir::new("modify-single").unwrap();
