@@ -192,15 +192,18 @@ impl Watcher {
                 if isfile {
                     match ev.fflags {
                         x if x.intersects(NOTE_WRITE) => {
+                            debug!(" <- Modify: {}", path.display());
                             tx.send(Modify(path));
                         }
                         x if x.intersects(NOTE_DELETE) => {
+                            debug!(" <- Remove: {}", path.display());
                             fds.remove(&fd);
                             paths.remove(&fd);
                             tx.send(Remove(path));
                         }
                         x if x.intersects(NOTE_RENAME) => {
                             let new = getpath(fd);
+                            debug!(" <- Rename: {} -> {}", path.display(), new.display());
                             // TODO: Update new info.
                             // TODO: What if new path is not watched?
                             tx.send(Rename(path, new));
