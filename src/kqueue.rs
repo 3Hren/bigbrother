@@ -89,11 +89,8 @@ impl Watcher {
     }
 
     pub fn watch(&mut self, path: Path) {
-        debug!("Adding {} to the watcher", path.display());
-
-        // TODO: Path exists?
-        //  + > Send
-        //  - > Return EBADF (PathNotExists).
+        debug!("Trying to add '{}' to the watcher ...", path.display());
+        // TODO: Return EBADF (PathNotExists) if path not exists.
         self.txc.send(Add(path));
     }
 
@@ -113,7 +110,7 @@ impl Watcher {
                 Ok(value) => {
                     match value {
                         Add(path) => {
-                            debug!("Trying to add '{}' ...", path.display());
+                            debug!("Trying to register '{}' with kqueue...", path.display());
                             // TODO: Follow if path - symlink.
                             let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
