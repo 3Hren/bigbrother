@@ -408,7 +408,7 @@ impl FileHandler {
 impl Drop for FileHandler {
     fn drop(&mut self) {
         unsafe {
-            close(self.fd)
+            close(self.fd);
         }
     }
 }
