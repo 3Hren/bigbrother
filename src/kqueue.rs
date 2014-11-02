@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
 use std::collections::HashMap;
-use std::io::FileStat;
+use std::io::{FileStat, FileType, TypeFile, TypeDirectory};
 use std::io::fs;
 use std::io::fs::PathExtensions;
 use std::ptr;
@@ -30,9 +30,27 @@ enum Control {
     Add(Path),
 }
 
+struct ClonableFileType(FileType);
+
+impl Clone for ClonableFileType {
+    fn clone(&self) -> ClonableFileType {
+        use std::io::{TypeFile, TypeDirectory, TypeNamedPipe, TypeBlockSpecial, TypeSymlink, TypeUnknown};
+
+        match *self {
+            ClonableFileType(TypeFile)         => ClonableFileType(TypeFile),
+            ClonableFileType(TypeDirectory)    => ClonableFileType(TypeDirectory),
+            ClonableFileType(TypeNamedPipe)    => ClonableFileType(TypeNamedPipe),
+            ClonableFileType(TypeBlockSpecial) => ClonableFileType(TypeBlockSpecial),
+            ClonableFileType(TypeSymlink)      => ClonableFileType(TypeSymlink),
+            ClonableFileType(TypeUnknown)      => ClonableFileType(TypeUnknown),
+        }
+    }
+}
+
 #[deriving(Clone)]
 struct WatchedFileStat {
     path: Path,
+    kind: ClonableFileType,
 //    size: u64,
 //    perm: FilePermission,
 //    created: u64,
@@ -54,6 +72,7 @@ impl WatchedFileStat {
     fn new(path: Path, stat: &FileStat) -> WatchedFileStat {
         WatchedFileStat {
             path: path,
+            kind: ClonableFileType(stat.kind),
             modified: stat.modified,
             inode: stat.unstable.inode,
         }
@@ -117,7 +136,7 @@ impl Watcher {
 
                             if path.is_file() {
                                 fds.insert(fd, handler);
-                                paths.insert(fd, (path, true));
+                                paths.insert(fd, (path, ClonableFileType(TypeFile)));
                                 let input = [
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 ];
@@ -127,7 +146,7 @@ impl Watcher {
                                 debug!("Adding {} descriptors: {}", input.len(), n);
                             } else if path.is_dir() {
                                 fds.insert(fd, handler);
-                                paths.insert(fd, (path.clone(), false));
+                                paths.insert(fd, (path.clone(), ClonableFileType(TypeDirectory)));
                                 let mut input = Vec::new();
                                 input.push(
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
@@ -136,15 +155,14 @@ impl Watcher {
                                 for p in fs::walk_dir(&path).unwrap() {
                                     debug!(" - adding sub '{}' ...", p.display());
 
-                                    let stat = p.stat().unwrap();
-                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
-
                                     let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
                                     let fd = handler.fd;
-                                    let isfile = p.is_file();
+                                    let stat = p.stat().unwrap();
 
                                     fds.insert(fd, handler);
-                                    paths.insert(fd, (p.clone(), isfile));
+                                    paths.insert(fd, (p.clone(), ClonableFileType(stat.kind)));
+                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
+
                                     input.push(
                                         kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                     );
@@ -173,7 +191,7 @@ impl Watcher {
             for ev in output[..n].iter() {
                 debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
-                let (path, isfile) = match paths.find(&fd) {
+                let (path, kind) = match paths.find(&fd) {
                     Some(v) => v.clone(),
                     None => {
                         warn!("Received unregistered event on {} fd - ignoring", ev.ident);
@@ -186,51 +204,57 @@ impl Watcher {
                     continue;
                 }
 
-                if isfile {
-                    match ev.fflags {
-                        x if x.intersects(NOTE_WRITE) => {
-                            debug!(" <- Modify: {}", path.display());
-                            // TODO: Seems like I should sync current position with the kevent.
-                            tx.send(Modify(path));
-                        }
-                        x if x.intersects(NOTE_DELETE) => {
-                            debug!(" <- Remove: {}", path.display());
-                            fds.remove(&fd);
-                            paths.remove(&fd);
-                            tx.send(Remove(path));
-                        }
-                        x if x.intersects(NOTE_RENAME) => {
-                            let new = getpath(fd);
-                            debug!(" <- Rename: {} -> {}", path.display(), new.display());
-                            // TODO: Update new info.
-                            // TODO: What if new path is not watched?
-                            tx.send(Rename(path, new));
-                        }
-                        // TODO: ModifyAttr
-                        x => {
-                            debug!("Received unintresting {} event - ignoring", x);
+                match kind {
+                    ClonableFileType(TypeFile) => {
+                        match ev.fflags {
+                            x if x.intersects(NOTE_WRITE) => {
+                                debug!(" <- Modify: {}", path.display());
+                                // TODO: Seems like I should sync current position with the kevent.
+                                tx.send(Modify(path));
+                            }
+                            x if x.intersects(NOTE_DELETE) => {
+                                debug!(" <- Remove: {}", path.display());
+                                fds.remove(&fd);
+                                paths.remove(&fd);
+                                tx.send(Remove(path));
+                            }
+                            x if x.intersects(NOTE_RENAME) => {
+                                let new = getpath(fd);
+                                debug!(" <- Rename: {} -> {}", path.display(), new.display());
+                                // TODO: Update new info.
+                                // TODO: What if new path is not watched?
+                                tx.send(Rename(path, new));
+                            }
+                            // TODO: ModifyAttr
+                            x => {
+                                debug!("Received unintresting {} event - ignoring", x);
+                            }
                         }
                     }
-                } else {
-                    match ev.fflags {
-                        x if x.intersects(NOTE_WRITE) => {
-                            debug!("Scanning {}", path.display());
-                            let mut currstats = HashMap::new();
+                    ClonableFileType(TypeDirectory) => {
+                        match ev.fflags {
+                            x if x.intersects(NOTE_WRITE) => {
+                                debug!("Scanning {}", path.display());
+                                let mut currstats = HashMap::new();
 
-                            for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
-                                let stat = path.stat().unwrap();
-                                debug!("Found {}, {}", path.display(), stat.modified);
-                                currstats.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
+                                for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
+                                    let stat = path.stat().unwrap();
+                                    debug!("Found {}, {}", path.display(), stat.modified);
+                                    currstats.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
+                                }
+
+                                Watcher::created(&stats, &currstats, &tx);
+                                // Watcher::modified(&stats, &currstats, &tx);
+                                // TODO: Save new stats.
+                                stats = currstats;
                             }
-
-                            Watcher::created(&stats, &currstats, &tx);
-                            // Watcher::modified(&stats, &currstats, &tx);
-                            // TODO: Save new stats.
-                            stats = currstats;
+                            x => {
+                                debug!("Received unintresting {} event - ignoring", x);
+                            }
                         }
-                        x => {
-                            debug!("Received unintresting {} event - ignoring", x);
-                        }
+                    }
+                    _ => {
+                        // TODO: Do something useful.
                     }
                     // TODO: Write - new file has been created (or any action with files within directory?)
                     //   Scan for new files
