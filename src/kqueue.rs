@@ -254,7 +254,7 @@ impl Watcher {
                         }
                     }
                     _ => {
-                        // TODO: Do something useful.
+                        warn!("Received event from non-file descriptor - ignoring");
                     }
                     // TODO: Write - new file has been created (or any action with files within directory?)
                     //   Scan for new files
