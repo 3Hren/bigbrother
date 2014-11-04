@@ -733,7 +733,7 @@ mod watcher {
         watcher.watch(tmp2.path().clone());
 
         // Sleep a bit more to match at lease 3-4 internal loop cycles.
-        timer::sleep(Duration::milliseconds(500));
+        timer::sleep(Duration::milliseconds(400));
 
         File::create(&path1).unwrap();
         File::create(&path2).unwrap();
@@ -756,34 +756,34 @@ mod watcher {
         assert!(matches.is_empty());
     }
 
+    #[test]
+    fn rename_file_from_nonwatched_directory_to_watched() {
+        // Event should be considered as file creation in watched directory.
+        let tmp1 = TempDir::new("rename-nowatched").unwrap();
+        let tmp2 = TempDir::new("rename-towatched").unwrap();
+        let oldpath = tmp1.path().join("file-old.log");
+        let newpath = tmp2.path().join("file-new.log");
+
+        File::create(&oldpath).unwrap();
+
+        timer::sleep(Duration::milliseconds(50));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp2.path().clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::rename(&oldpath, &newpath).unwrap();
+
+        match watcher.rx.recv() {
+            Create(p) => {
+                assert_eq!(b"file-new.log", p.filename().unwrap());
+            }
+            _ => { fail!("Expected `Create` event") }
+        }
+    }
+
 //==============================================================================
-//    #[test]
-//    fn rename_file_from_nonwatched_directory_to_watched() {
-//        // Event should be considered as file creation in watched directory.
-//        let tmp1 = TempDir::new("rename-nowatched").unwrap();
-//        let tmp2 = TempDir::new("rename-towatched").unwrap();
-//        let oldpath = tmp1.path().join("file-old.log");
-//        let newpath = tmp2.path().join("file-new.log");
-
-//        File::create(&oldpath).unwrap();
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp2.path().clone());
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        fs::rename(&oldpath, &newpath).unwrap();
-
-//        match watcher.rx.recv() {
-//            Create(p) => {
-//                assert_eq!(b"file-new.log", p.filename().unwrap());
-//            }
-//            _ => { fail!("Expected `Create` event") }
-//        }
-//    }
-
 //    #[test]
 //    fn rename_file_from_watched_directory_to_nonwatched() {
 //        // Event should be considered as file removing in watched directory.
