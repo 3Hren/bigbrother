@@ -718,40 +718,45 @@ mod watcher {
         }
     }
 
+    #[test]
+    fn create_two_files_in_different_directories() {
+        use std::str;
+        use std::collections::HashSet;
+
+        let tmp1 = TempDir::new("create-1").unwrap();
+        let tmp2 = TempDir::new("create-2").unwrap();
+        let path1 = tmp1.path().join("file1.log");
+        let path2 = tmp2.path().join("file2.log");
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp1.path().clone());
+        watcher.watch(tmp2.path().clone());
+
+        // Sleep a bit more to match at lease 3-4 internal loop cycles.
+        timer::sleep(Duration::milliseconds(500));
+
+        File::create(&path1).unwrap();
+        File::create(&path2).unwrap();
+
+        let mut matches = HashSet::new();
+        matches.insert(String::from_str("file1.log"));
+        matches.insert(String::from_str("file2.log"));
+
+        let mut counter = 2u8;
+        while counter > 0 {
+            match watcher.rx.recv() {
+                Create(p) => {
+                    assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
+                }
+                _ => { fail!("Expected `Create` event") }
+            }
+
+            counter -= 1;
+        }
+        assert!(matches.is_empty());
+    }
+
 //==============================================================================
-//    #[test]
-//    fn create_two_files_in_different_directories() {
-//        let tmp1 = TempDir::new("create-1").unwrap();
-//        let tmp2 = TempDir::new("create-2").unwrap();
-//        let path1 = tmp1.path().join("file1.log");
-//        let path2 = tmp2.path().join("file2.log");
-
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp1.path().clone());
-//        watcher.watch(tmp2.path().clone());
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        File::create(&path1).unwrap();
-//        File::create(&path2).unwrap();
-
-//        let mut matches = HashSet::new();
-//        matches.insert(String::from_str("file1.log"));
-//        matches.insert(String::from_str("file2.log"));
-
-//        let mut counter = 2u8;
-//        while counter > 0 {
-//            match watcher.rx.recv() {
-//                Create(p) => {
-//                    assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
-//                }
-//                _ => { fail!("Expected `Create` event") }
-//            }
-//            counter -= 1;
-//        }
-//        assert!(matches.is_empty());
-//    }
-
 //    #[test]
 //    fn rename_file_from_nonwatched_directory_to_watched() {
 //        // Event should be considered as file creation in watched directory.
