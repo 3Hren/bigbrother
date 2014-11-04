@@ -170,6 +170,7 @@ impl Watcher {
 
                                 let mut output: [kevent, ..0] = [];
                                 let n = queue.process(input.as_slice(), &mut output, &None);
+                                // TODO: Analyze result.
                                 debug!("Adding {} descriptors: {}", input.len(), n);
                             }
                         }
