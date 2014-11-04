@@ -141,7 +141,7 @@ impl Watcher {
                                 stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
 
                                 let input = [
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 ];
 
                                 let mut output: [kevent, ..0] = [];
@@ -154,7 +154,7 @@ impl Watcher {
 
                                 let mut input = Vec::new();
                                 input.push(
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 );
 
                                 for p in fs::walk_dir(&path).unwrap() {
@@ -169,7 +169,7 @@ impl Watcher {
                                     stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
 
                                     input.push(
-                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                     );
                                 }
 
