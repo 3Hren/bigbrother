@@ -119,9 +119,9 @@ impl Watcher {
         let period: f32 = 0.1e9;
         let timeout = Timespec::new(0, period as i32);
 
-        let mut fds = HashMap::new();
-        let mut paths = HashMap::new();
-        let mut stats: FileStatMap = HashMap::new();
+        let mut fds  : HashMap<i32, FileHandler> = HashMap::new();
+        let mut nodes: HashMap<i32, u64>         = HashMap::new();
+        let mut stats: FileStatMap               = HashMap::new();
         loop {
             debug!("Performing watcher loop iteration ...");
 
@@ -133,10 +133,13 @@ impl Watcher {
                             // TODO: Follow if path - symlink.
                             let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
                             let fd = handler.fd;
+                            let stat = path.stat().unwrap();
 
                             if path.is_file() {
                                 fds.insert(fd, handler);
-                                paths.insert(fd, (path, ClonableFileType(TypeFile)));
+                                nodes.insert(fd, stat.unstable.inode);
+                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
                                 let input = [
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                                 ];
@@ -146,7 +149,9 @@ impl Watcher {
                                 debug!("Adding {} descriptors: {}", input.len(), n);
                             } else if path.is_dir() {
                                 fds.insert(fd, handler);
-                                paths.insert(fd, (path.clone(), ClonableFileType(TypeDirectory)));
+                                nodes.insert(fd, stat.unstable.inode);
+                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
                                 let mut input = Vec::new();
                                 input.push(
                                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
@@ -160,7 +165,7 @@ impl Watcher {
                                     let stat = p.stat().unwrap();
 
                                     fds.insert(fd, handler);
-                                    paths.insert(fd, (p.clone(), ClonableFileType(stat.kind)));
+                                    nodes.insert(fd, stat.unstable.inode);
                                     stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
 
                                     input.push(
@@ -192,20 +197,28 @@ impl Watcher {
             for ev in output[..n].iter() {
                 debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
                 let fd = ev.ident as i32;
-                let (path, kind) = match paths.find(&fd) {
-                    Some(v) => v.clone(),
+                let stat = match nodes.find(&fd) {
+                    Some(inode) => match stats.find_copy(inode) {
+                        Some(v) => v,
+                        None => {
+                            warn!("Received unregistered event on {} inode - ignoring", inode);
+                            continue;
+                        }
+                    },
                     None => {
                         warn!("Received unregistered event on {} fd - ignoring", ev.ident);
                         continue;
                     }
                 };
 
+                let path = stat.path.clone();
+
                 if !ev.filter.intersects(EVFILT_VNODE) {
                     warn!("Received non vnode event - ignoring");
                     continue;
                 }
 
-                match kind {
+                match stat.kind {
                     ClonableFileType(TypeFile) => {
                         match ev.fflags {
                             x if x.intersects(NOTE_WRITE) => {
@@ -216,7 +229,7 @@ impl Watcher {
                             x if x.intersects(NOTE_DELETE) => {
                                 debug!(" <- Remove: {}", path.display());
                                 fds.remove(&fd);
-                                paths.remove(&fd);
+                                nodes.remove(&fd);
                                 tx.send(Remove(path));
                             }
                             x if x.intersects(NOTE_RENAME) => {
@@ -247,7 +260,6 @@ impl Watcher {
                                 Watcher::created(&stats, &currstats, &tx);
                                 // Watcher::modified(&stats, &currstats, &tx);
                                 // TODO: Save new stats.
-                                stats = currstats;
                             }
                             x => {
                                 debug!("Received unintresting {} event - ignoring", x);
