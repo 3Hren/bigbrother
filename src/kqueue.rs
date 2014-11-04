@@ -30,6 +30,7 @@ enum Control {
     Add(Path),
 }
 
+// Temporary wrapper for FileType, which is non-clonable for some reasons I don't understand.
 struct ClonableFileType(FileType);
 
 impl Clone for ClonableFileType {
@@ -129,55 +130,7 @@ impl Watcher {
                 Ok(value) => {
                     match value {
                         Add(path) => {
-                            debug!("Trying to register '{}' with kqueue...", path.display());
-                            // TODO: Follow if path - symlink.
-                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
-                            let fd = handler.fd;
-                            let stat = path.stat().unwrap();
-
-                            if path.is_file() {
-                                fds.insert(fd, handler);
-                                nodes.insert(fd, stat.unstable.inode);
-                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-
-                                let input = [
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                ];
-
-                                let mut output: [kevent, ..0] = [];
-                                let n = queue.process(&input, &mut output, &None);
-                                debug!("Adding {} descriptors: {}", input.len(), n);
-                            } else if path.is_dir() {
-                                fds.insert(fd, handler);
-                                nodes.insert(fd, stat.unstable.inode);
-                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-
-                                let mut input = Vec::new();
-                                input.push(
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                );
-
-                                for p in fs::walk_dir(&path).unwrap() {
-                                    debug!(" - adding sub '{}' ...", p.display());
-
-                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
-                                    let fd = handler.fd;
-                                    let stat = p.stat().unwrap();
-
-                                    fds.insert(fd, handler);
-                                    nodes.insert(fd, stat.unstable.inode);
-                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
-
-                                    input.push(
-                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                    );
-                                }
-
-                                let mut output: [kevent, ..0] = [];
-                                let n = queue.process(input.as_slice(), &mut output, &None);
-                                // TODO: Analyze result.
-                                debug!("Adding {} descriptors: {}", input.len(), n);
-                            }
+                            Watcher::add(path, &mut queue, &mut fds, &mut nodes, &mut stats);
                         }
                     }
                 }
@@ -258,6 +211,7 @@ impl Watcher {
                                 }
 
                                 Watcher::created(&stats, &currstats, &tx);
+                                //Watcher::removed(&stats, &currstats, &tx);
                                 // Watcher::modified(&stats, &currstats, &tx);
                                 // TODO: Save new stats.
                             }
@@ -289,8 +243,57 @@ impl Watcher {
         debug!("Watcher thread has been stopped");
     }
 
-//    fn add(mut queue: KQueue, paths: &mut HashMap<i32, FileHandler>, path: Path, tx: Sender<Event>) {
-//    }
+    fn add(path: Path, queue: &mut KQueue, fds: &mut HashMap<i32, FileHandler>, nodes: &mut HashMap<i32, u64>, stats: &mut FileStatMap) {
+        debug!("Trying to register '{}' with kqueue...", path.display());
+        // TODO: Follow if path - symlink.
+        let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
+        let fd = handler.fd;
+        let stat = path.stat().unwrap();
+
+        if path.is_file() {
+            fds.insert(fd, handler);
+            nodes.insert(fd, stat.unstable.inode);
+            stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
+            let input = [
+                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+            ];
+
+            let mut output: [kevent, ..0] = [];
+            let n = queue.process(&input, &mut output, &None);
+            debug!("Adding {} descriptors: {}", input.len(), n);
+        } else if path.is_dir() {
+            fds.insert(fd, handler);
+            nodes.insert(fd, stat.unstable.inode);
+            stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
+            let mut input = Vec::new();
+            input.push(
+                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+            );
+
+            for p in fs::walk_dir(&path).unwrap() {
+                debug!(" - adding sub '{}' ...", p.display());
+
+                let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
+                let fd = handler.fd;
+                let stat = p.stat().unwrap();
+
+                fds.insert(fd, handler);
+                nodes.insert(fd, stat.unstable.inode);
+                stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
+
+                input.push(
+                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                );
+            }
+
+            let mut output: [kevent, ..0] = [];
+            let n = queue.process(input.as_slice(), &mut output, &None);
+            // TODO: Analyze result.
+            debug!("Adding {} descriptors: {}", input.len(), n);
+        }
+    }
 
     fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
         for (inode, stat) in curr.iter() {
@@ -301,13 +304,14 @@ impl Watcher {
         }
     }
 
-//    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-//        for (inode, stat) in prev.iter() {
-//            if !curr.contains_key(inode) {
-//                tx.send(Remove(stat.path.clone()));
-//            }
-//        }
-//    }
+    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+        for (inode, stat) in prev.iter() {
+            if !curr.contains_key(inode) {
+                debug!(" <- Remove: {}", stat.path.display());
+                tx.send(Remove(stat.path.clone()));
+            }
+        }
+    }
 
 //    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
 //        for (inode, stat) in curr.iter() {
@@ -783,34 +787,34 @@ mod watcher {
         }
     }
 
+    #[test]
+    fn rename_file_from_watched_directory_to_nonwatched() {
+        // Event should be considered as file removing in watched directory.
+        let tmp1 = TempDir::new("rename-watched").unwrap();
+        let tmp2 = TempDir::new("rename-nonwatched").unwrap();
+        let oldpath = tmp1.path().join("file-old.log");
+        let newpath = tmp2.path().join("file-new.log");
+
+        File::create(&oldpath).unwrap();
+
+        timer::sleep(Duration::milliseconds(50));
+
+        let mut watcher = Watcher::new();
+        watcher.watch(tmp1.path().clone());
+
+        timer::sleep(Duration::milliseconds(50));
+
+        fs::rename(&oldpath, &newpath).unwrap();
+
+        match watcher.rx.recv() {
+            Remove(p) => {
+                assert_eq!(b"file-old.log", p.filename().unwrap());
+            }
+            _ => { fail!("Expected `Remove` event") }
+        }
+    }
+
 //==============================================================================
-//    #[test]
-//    fn rename_file_from_watched_directory_to_nonwatched() {
-//        // Event should be considered as file removing in watched directory.
-//        let tmp1 = TempDir::new("rename-iswatched").unwrap();
-//        let tmp2 = TempDir::new("rename-nowatched").unwrap();
-//        let oldpath = tmp1.path().join("file-old.log");
-//        let newpath = tmp2.path().join("file-new.log");
-
-//        File::create(&oldpath).unwrap();
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp1.path().clone());
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        fs::rename(&oldpath, &newpath).unwrap();
-
-//        match watcher.rx.recv() {
-//            Remove(p) => {
-//                assert_eq!(b"file-old.log", p.filename().unwrap());
-//            }
-//            _ => { fail!("Expected `Remove` event") }
-//        }
-//    }
-
 //    #[test]
 //    fn rename_file_from_watched_directory_to_watched() {
 //        // Event should be considered as file renaming.
