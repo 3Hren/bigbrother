@@ -295,6 +295,7 @@ impl Watcher {
     fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
         for (inode, stat) in curr.iter() {
             if !prev.contains_key(inode) {
+                debug!(" <- Create: {}", stat.path.display());
                 tx.send(Create(stat.path.clone()));
             }
         }
