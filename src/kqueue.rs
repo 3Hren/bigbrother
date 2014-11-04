@@ -123,7 +123,7 @@ impl Watcher {
         let mut paths = HashMap::new();
         let mut stats: FileStatMap = HashMap::new();
         loop {
-            debug!("Performing next watcher loop iteration ...");
+            debug!("Performing watcher loop iteration ...");
 
             match rxc.try_recv() {
                 Ok(value) => {
