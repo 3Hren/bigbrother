@@ -720,34 +720,6 @@ mod watcher {
 
 //==============================================================================
 //    #[test]
-//    fn modify_single_file() {
-//        let tmp = TempDir::new("modify-single").unwrap();
-//        let path = tmp.path().join("file.log");
-
-//        let mut file = File::create(&path).unwrap();
-
-//        timer::sleep(Duration::milliseconds(50));
-
-//        let mut watcher = Watcher::new();
-//        watcher.watch(tmp.path().clone());
-
-//        // Timeout is need to be at least one second, because at least ext3 filesystem has seconds resolution.
-//        timer::sleep(Duration::milliseconds(1000));
-//        debug!("Modifying file ...");
-
-//        file.write(b"some bytes!\n").unwrap();
-//        file.flush().unwrap();
-//        file.fsync().unwrap();
-
-//        match watcher.rx.recv() {
-//            Modify(p) => {
-//                assert_eq!(b"file.log", p.filename().unwrap());
-//            }
-//            _ => { debug!("Expected `Modify` event") }
-//        }
-//    }
-
-//    #[test]
 //    fn create_two_files_in_different_directories() {
 //        let tmp1 = TempDir::new("create-1").unwrap();
 //        let tmp2 = TempDir::new("create-2").unwrap();
