@@ -6,8 +6,6 @@ use std::io::{FileStat, FileType, TypeFile, TypeDirectory};
 use std::io::fs;
 use std::io::fs::PathExtensions;
 use std::ptr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, SeqCst};
 
 use sync::comm::{Empty, Disconnected};
 
@@ -29,6 +27,7 @@ pub enum KQueueError {
 
 enum Control {
     Add(Path),
+    Exit,
 }
 
 // Temporary wrapper for FileType, which is non-clonable for some reasons I don't understand.
@@ -86,7 +85,6 @@ type FileStatMap = HashMap<u64, WatchedFileStat>;
 pub struct Watcher {
     pub rx: Receiver<Event>,
     txc: Sender<Control>,
-    stopped: Arc<AtomicBool>,
 }
 
 impl Watcher {
@@ -98,14 +96,11 @@ impl Watcher {
 
         let (tx, rx) = channel();
         let (txc, rxc) = channel();
-        let stopped = Arc::new(AtomicBool::new(false));
-        let flag = stopped.clone();
-        spawn(proc() Watcher::run(queue, tx, rxc, flag));
+        spawn(proc() Watcher::run(queue, tx, rxc));
 
         Watcher {
             rx: rx,
             txc: txc,
-            stopped: stopped,
         }
     }
 
@@ -115,17 +110,12 @@ impl Watcher {
         self.txc.send(Add(path));
     }
 
-    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>, stopped: Arc<AtomicBool>) {
+    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
         debug!("Starting watcher thread ...");
+        let mut d = Internal::new(tx.clone());
 
-        let period: f32 = 0.1e9;
-        let timeout = Timespec::new(0, period as i32);
+        let timeout = Timespec::new(0, 100000000i32);
 
-        let mut fds  : HashMap<i32, FileHandler> = HashMap::new();
-        let mut paths = HashMap::new();
-        let mut nodes: HashMap<i32, u64>         = HashMap::new();
-        let mut stats: FileStatMap               = HashMap::new();
-        let mut dirs = HashSet::new();
         loop {
             debug!("Performing watcher loop iteration ...");
 
@@ -134,58 +124,14 @@ impl Watcher {
                     match value {
                         Add(path) => {
                             debug!("Trying to register '{}' with kqueue...", path.display());
-                            // TODO: Follow if path - symlink.
-                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
-                            let fd = handler.fd;
-                            let stat = path.stat().unwrap();
-
-                            if path.is_file() {
-                                fds.insert(fd, handler);
-                                paths.insert(fd, path.clone());
-                                nodes.insert(fd, stat.unstable.inode);
-                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-
-                                let input = [
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                ];
-
-                                let mut output: [kevent, ..0] = [];
-                                let n = queue.process(&input, &mut output, &None);
-                                debug!("Adding {} descriptors: {}", input.len(), n);
-                            } else if path.is_dir() {
-                                fds.insert(fd, handler);
-                                paths.insert(fd, path.clone());
-                                nodes.insert(fd, stat.unstable.inode);
-                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-                                dirs.insert(os::make_absolute(&path));
-
-                                let mut input = Vec::new();
-                                input.push(
-                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                );
-
-                                for p in fs::walk_dir(&path).unwrap() {
-                                    debug!(" - adding sub '{}' ...", p.display());
-
-                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
-                                    let fd = handler.fd;
-                                    let stat = p.stat().unwrap();
-
-                                    fds.insert(fd, handler);
-                                    paths.insert(fd, p.clone());
-                                    nodes.insert(fd, stat.unstable.inode);
-                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
-
-                                    input.push(
-                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                                    );
-                                }
-
-                                let mut output: [kevent, ..0] = [];
-                                let n = queue.process(input.as_slice(), &mut output, &None);
-                                // TODO: Analyze result.
-                                debug!("Adding {} descriptors: {}", input.len(), n);
-                            }
+                            let input = d.add(path);
+                            let mut output: [kevent, ..0] = [];
+                            let n = queue.process(input.as_slice(), &mut output, &None);
+                            // TODO: Analyze result.
+                            debug!("Adding {} descriptors: {}", input.len(), n);
+                        }
+                        Exit => {
+                            break
                         }
                     }
                 }
@@ -195,111 +141,11 @@ impl Watcher {
 
             let input = [];
             let mut output: [kevent, ..1] = [kevent::invalid()];
-
             let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
-            if stopped.load(SeqCst) {
-                break
-            }
 
-            debug!("Processing {} events ...", n);
+            debug!("Processing {} event{} ...", n, if n > 1 {"s"} else {""});
             for ev in output[..n].iter() {
-                debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
-                let fd = ev.ident as i32;
-                let stat = match nodes.find(&fd) {
-                    Some(inode) => match stats.find_copy(inode) {
-                        Some(v) => v,
-                        None => {
-                            warn!("Received unregistered event on {} inode - ignoring", inode);
-                            continue;
-                        }
-                    },
-                    None => {
-                        warn!("Received unregistered event on {} fd - ignoring", ev.ident);
-                        continue;
-                    }
-                };
-
-                let path = match paths.find(&fd) {
-                    Some(p) => p.clone(),
-                    None => {
-                        continue;
-                    }
-                };
-
-                if !ev.filter.intersects(EVFILT_VNODE) {
-                    warn!("Received non vnode event - ignoring");
-                    continue;
-                }
-
-                match stat.kind {
-                    ClonableFileType(TypeFile) => {
-                        match ev.fflags {
-                            x if x.intersects(NOTE_WRITE) => {
-                                debug!(" <- Modify: {}", path.display());
-                                // TODO: Seems like I should sync current position with the kevent.
-                                tx.send(Modify(path));
-                            }
-                            x if x.intersects(NOTE_DELETE) => {
-                                debug!(" <- Remove: {}", path.display());
-                                fds.remove(&fd);
-                                nodes.remove(&fd);
-                                tx.send(Remove(path));
-                            }
-                            x if x.intersects(NOTE_RENAME) => {
-                                let new = getpath(fd);
-                                error!("NEWPATH {}", new.dir_path().display());
-                                if !dirs.contains(&new.dir_path()) {
-                                    debug!(" <- Remove: {}", path.display());
-                                    tx.send(Remove(path));
-                                } else {
-                                    debug!(" <- Rename: {} -> {}", path.display(), new.display());
-                                    // TODO: Update new info.
-                                    tx.send(Rename(path, new));
-                                }
-                            }
-                            // TODO: ModifyAttr
-                            x => {
-                                debug!("Received unintresting {} event - ignoring", x);
-                            }
-                        }
-                    }
-                    ClonableFileType(TypeDirectory) => {
-                        match ev.fflags {
-                            x if x.intersects(NOTE_WRITE) => {
-                                debug!("Directory {} has changed - scanning ...", path.display());
-                                let mut curr = HashMap::new();
-
-                                for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
-                                    let stat = path.stat().unwrap();
-                                    debug!("Found {}, {}", path.display(), stat.modified);
-                                    curr.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
-                                }
-
-                                Watcher::created(&stats, &curr, &tx);
-                                // TODO: Save new stats.
-                            }
-                            x => {
-                                debug!("Received unintresting {} event - ignoring", x);
-                            }
-                        }
-                    }
-                    _ => {
-                        warn!("Received event from non-file descriptor - ignoring");
-                    }
-                    // TODO: Write - new file has been created (or any action with files within directory?)
-                    //   Scan for new files
-                    //   Allocate events list
-                    //   An fd contains in `watched` map?
-                    //     + > nop
-                    //     - > add to `watched` & add to events list
-                    //       tx.send Create
-                    //   Process events list.
-
-                    // TODO: Remove
-                    //   Maybe do nothing with paths, because all files should be evented?
-                    // TODO: Rename
-                    // TODO: ModifyAttr
-                }
+                d.process(ev);
             }
         }
 
@@ -320,7 +166,179 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         debug!("Dropping the watcher");
 
-        self.stopped.store(true, SeqCst);
+        self.txc.send(Exit);
+    }
+}
+
+struct Internal {
+    tx: Sender<Event>,
+
+    fds: HashMap<i32, FileHandler>,
+    paths: HashMap<i32, Path>,
+    nodes: HashMap<i32, u64>,
+    stats: FileStatMap,
+    dirs: HashSet<Path>,
+}
+
+impl Internal {
+    fn new(tx: Sender<Event>) -> Internal {
+        Internal {
+            tx: tx,
+            fds:   HashMap::new(),
+            paths: HashMap::new(),
+            nodes: HashMap::new(),
+            stats: HashMap::new(),
+            dirs:  HashSet::new(),
+        }
+    }
+
+    fn add(&mut self, path: Path) -> Vec<kevent> {
+        // TODO: Follow if path - symlink.
+        let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
+        let fd = handler.fd;
+        let stat = path.stat().unwrap();
+
+        let mut input = Vec::new();
+
+        if path.is_file() {
+            self.fds.insert(fd, handler);
+            self.paths.insert(fd, path.clone());
+            self.nodes.insert(fd, stat.unstable.inode);
+            self.stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
+            input.push(
+                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+            );
+        } else if path.is_dir() {
+            self.fds.insert(fd, handler);
+            self.paths.insert(fd, path.clone());
+            self.nodes.insert(fd, stat.unstable.inode);
+            self.stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+            self.dirs.insert(os::make_absolute(&path));
+
+            input.push(
+                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+            );
+
+            for p in fs::walk_dir(&path).unwrap() {
+                debug!(" - adding sub '{}' ...", p.display());
+
+                let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
+                let fd = handler.fd;
+                let stat = p.stat().unwrap();
+
+                self.fds.insert(fd, handler);
+                self.paths.insert(fd, p.clone());
+                self.nodes.insert(fd, stat.unstable.inode);
+                self.stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
+
+                input.push(
+                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                );
+            }
+        }
+
+        input
+    }
+
+    fn process(&mut self, ev: &kevent) {
+        debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
+        let fd = ev.ident as i32;
+        let stat = match self.nodes.find(&fd) {
+            Some(inode) => match self.stats.find_copy(inode) {
+                Some(v) => v,
+                None => {
+                    warn!("Received unregistered event on {} inode - ignoring", inode);
+                    return;
+                }
+            },
+            None => {
+                warn!("Received unregistered event on {} fd - ignoring", ev.ident);
+                return;
+            }
+        };
+
+        let path = match self.paths.find(&fd) {
+            Some(p) => p.clone(),
+            None => {
+                return;
+            }
+        };
+
+        if !ev.filter.intersects(EVFILT_VNODE) {
+            warn!("Received non vnode event - ignoring");
+            return;
+        }
+
+        match stat.kind {
+            ClonableFileType(TypeFile) => {
+                match ev.fflags {
+                    x if x.intersects(NOTE_WRITE) => {
+                        debug!(" <- Modify: {}", path.display());
+                        // TODO: Seems like I should sync current position with the kevent.
+                        self.tx.send(Modify(path));
+                    }
+                    x if x.intersects(NOTE_DELETE) => {
+                        debug!(" <- Remove: {}", path.display());
+                        self.fds.remove(&fd);
+                        self.nodes.remove(&fd);
+                        self.tx.send(Remove(path));
+                    }
+                    x if x.intersects(NOTE_RENAME) => {
+                        let new = getpath(fd);
+                        error!("NEWPATH {}", new.dir_path().display());
+                        if !self.dirs.contains(&new.dir_path()) {
+                            debug!(" <- Remove: {}", path.display());
+                            self.tx.send(Remove(path));
+                        } else {
+                            debug!(" <- Rename: {} -> {}", path.display(), new.display());
+                            // TODO: Update new info.
+                            self.tx.send(Rename(path, new));
+                        }
+                    }
+                    // TODO: ModifyAttr
+                    x => {
+                        debug!("Received unintresting {} event - ignoring", x);
+                    }
+                }
+            }
+            ClonableFileType(TypeDirectory) => {
+                match ev.fflags {
+                    x if x.intersects(NOTE_WRITE) => {
+                        debug!("Directory {} has changed - scanning ...", path.display());
+                        let mut curr = HashMap::new();
+
+                        for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
+                            let stat = path.stat().unwrap();
+                            debug!("Found {}, {}", path.display(), stat.modified);
+                            curr.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
+                        }
+
+                        Watcher::created(&self.stats, &curr, &self.tx);
+                        // TODO: Save new stats.
+                    }
+                    x => {
+                        debug!("Received unintresting {} event - ignoring", x);
+                    }
+                }
+            }
+            _ => {
+                warn!("Received event from non-file descriptor - ignoring");
+            }
+            // TODO: Write - new file has been created (or any action with files within directory?)
+            //   Scan for new files
+            //   Allocate events list
+            //   An fd contains in `watched` map?
+            //     + > nop
+            //     - > add to `watched` & add to events list
+            //       tx.send Create
+            //   Process events list.
+
+            // TODO: Remove
+            //   Maybe do nothing with paths, because all files should be evented?
+            // TODO: Rename
+            // TODO: ModifyAttr
+        }
     }
 }
 
