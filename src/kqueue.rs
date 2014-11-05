@@ -122,6 +122,7 @@ impl Watcher {
         let timeout = Timespec::new(0, period as i32);
 
         let mut fds  : HashMap<i32, FileHandler> = HashMap::new();
+        let mut paths = HashMap::new();
         let mut nodes: HashMap<i32, u64>         = HashMap::new();
         let mut stats: FileStatMap               = HashMap::new();
         let mut dirs = HashSet::new();
@@ -140,6 +141,7 @@ impl Watcher {
 
                             if path.is_file() {
                                 fds.insert(fd, handler);
+                                paths.insert(fd, path.clone());
                                 nodes.insert(fd, stat.unstable.inode);
                                 stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
 
@@ -152,6 +154,7 @@ impl Watcher {
                                 debug!("Adding {} descriptors: {}", input.len(), n);
                             } else if path.is_dir() {
                                 fds.insert(fd, handler);
+                                paths.insert(fd, path.clone());
                                 nodes.insert(fd, stat.unstable.inode);
                                 stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
                                 dirs.insert(os::make_absolute(&path));
@@ -169,6 +172,7 @@ impl Watcher {
                                     let stat = p.stat().unwrap();
 
                                     fds.insert(fd, handler);
+                                    paths.insert(fd, p.clone());
                                     nodes.insert(fd, stat.unstable.inode);
                                     stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
 
@@ -215,7 +219,12 @@ impl Watcher {
                     }
                 };
 
-                let path = stat.path.clone();
+                let path = match paths.find(&fd) {
+                    Some(p) => p.clone(),
+                    None => {
+                        continue;
+                    }
+                };
 
                 if !ev.filter.intersects(EVFILT_VNODE) {
                     warn!("Received non vnode event - ignoring");
@@ -267,8 +276,6 @@ impl Watcher {
                                 }
 
                                 Watcher::created(&stats, &curr, &tx);
-                                //Watcher::removed(&stats, &currstats, &tx);
-                                //Watcher::modified(&stats, &currstats, &tx);
                                 // TODO: Save new stats.
                             }
                             x => {
@@ -307,29 +314,6 @@ impl Watcher {
             }
         }
     }
-
-//    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-//        for (inode, stat) in prev.iter() {
-//            if !curr.contains_key(inode) {
-//                debug!(" <- Remove: {}", stat.path.display());
-//                tx.send(Remove(stat.path.clone()));
-//            }
-//        }
-//    }
-
-//    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-//        for (inode, stat) in curr.iter() {
-//            if let Some(prevstat) = prev.find(inode) {
-//                if prevstat.path != stat.path {
-//                    tx.send(Rename(prevstat.path.clone(), stat.path.clone()));
-//                }
-
-//                if prevstat.modified != stat.modified {
-//                    tx.send(Modify(stat.path.clone()));
-//                }
-//            }
-//        }
-//    }
 }
 
 impl Drop for Watcher {
