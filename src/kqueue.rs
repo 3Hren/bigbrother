@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types, non_uppercase_statics)] // C types
 
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
+use std::os;
 use std::io::{FileStat, FileType, TypeFile, TypeDirectory};
 use std::io::fs;
 use std::io::fs::PathExtensions;
@@ -123,6 +124,7 @@ impl Watcher {
         let mut fds  : HashMap<i32, FileHandler> = HashMap::new();
         let mut nodes: HashMap<i32, u64>         = HashMap::new();
         let mut stats: FileStatMap               = HashMap::new();
+        let mut dirs = HashSet::new();
         loop {
             debug!("Performing watcher loop iteration ...");
 
@@ -130,7 +132,56 @@ impl Watcher {
                 Ok(value) => {
                     match value {
                         Add(path) => {
-                            Watcher::add(path, &mut queue, &mut fds, &mut nodes, &mut stats);
+                            debug!("Trying to register '{}' with kqueue...", path.display());
+                            // TODO: Follow if path - symlink.
+                            let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
+                            let fd = handler.fd;
+                            let stat = path.stat().unwrap();
+
+                            if path.is_file() {
+                                fds.insert(fd, handler);
+                                nodes.insert(fd, stat.unstable.inode);
+                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+
+                                let input = [
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                ];
+
+                                let mut output: [kevent, ..0] = [];
+                                let n = queue.process(&input, &mut output, &None);
+                                debug!("Adding {} descriptors: {}", input.len(), n);
+                            } else if path.is_dir() {
+                                fds.insert(fd, handler);
+                                nodes.insert(fd, stat.unstable.inode);
+                                stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+                                dirs.insert(os::make_absolute(&path));
+
+                                let mut input = Vec::new();
+                                input.push(
+                                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                );
+
+                                for p in fs::walk_dir(&path).unwrap() {
+                                    debug!(" - adding sub '{}' ...", p.display());
+
+                                    let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
+                                    let fd = handler.fd;
+                                    let stat = p.stat().unwrap();
+
+                                    fds.insert(fd, handler);
+                                    nodes.insert(fd, stat.unstable.inode);
+                                    stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
+
+                                    input.push(
+                                        kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
+                                    );
+                                }
+
+                                let mut output: [kevent, ..0] = [];
+                                let n = queue.process(input.as_slice(), &mut output, &None);
+                                // TODO: Analyze result.
+                                debug!("Adding {} descriptors: {}", input.len(), n);
+                            }
                         }
                     }
                 }
@@ -187,10 +238,15 @@ impl Watcher {
                             }
                             x if x.intersects(NOTE_RENAME) => {
                                 let new = getpath(fd);
-                                debug!(" <- Rename: {} -> {}", path.display(), new.display());
-                                // TODO: Update new info.
-                                // TODO: What if new path is not watched?
-                                tx.send(Rename(path, new));
+                                error!("NEWPATH {}", new.dir_path().display());
+                                if !dirs.contains(&new.dir_path()) {
+                                    debug!(" <- Remove: {}", path.display());
+                                    tx.send(Remove(path));
+                                } else {
+                                    debug!(" <- Rename: {} -> {}", path.display(), new.display());
+                                    // TODO: Update new info.
+                                    tx.send(Rename(path, new));
+                                }
                             }
                             // TODO: ModifyAttr
                             x => {
@@ -201,18 +257,18 @@ impl Watcher {
                     ClonableFileType(TypeDirectory) => {
                         match ev.fflags {
                             x if x.intersects(NOTE_WRITE) => {
-                                debug!("Scanning {}", path.display());
-                                let mut currstats = HashMap::new();
+                                debug!("Directory {} has changed - scanning ...", path.display());
+                                let mut curr = HashMap::new();
 
                                 for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
                                     let stat = path.stat().unwrap();
                                     debug!("Found {}, {}", path.display(), stat.modified);
-                                    currstats.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
+                                    curr.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
                                 }
 
-                                Watcher::created(&stats, &currstats, &tx);
+                                Watcher::created(&stats, &curr, &tx);
                                 //Watcher::removed(&stats, &currstats, &tx);
-                                // Watcher::modified(&stats, &currstats, &tx);
+                                //Watcher::modified(&stats, &currstats, &tx);
                                 // TODO: Save new stats.
                             }
                             x => {
@@ -243,58 +299,6 @@ impl Watcher {
         debug!("Watcher thread has been stopped");
     }
 
-    fn add(path: Path, queue: &mut KQueue, fds: &mut HashMap<i32, FileHandler>, nodes: &mut HashMap<i32, u64>, stats: &mut FileStatMap) {
-        debug!("Trying to register '{}' with kqueue...", path.display());
-        // TODO: Follow if path - symlink.
-        let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
-        let fd = handler.fd;
-        let stat = path.stat().unwrap();
-
-        if path.is_file() {
-            fds.insert(fd, handler);
-            nodes.insert(fd, stat.unstable.inode);
-            stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-
-            let input = [
-                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-            ];
-
-            let mut output: [kevent, ..0] = [];
-            let n = queue.process(&input, &mut output, &None);
-            debug!("Adding {} descriptors: {}", input.len(), n);
-        } else if path.is_dir() {
-            fds.insert(fd, handler);
-            nodes.insert(fd, stat.unstable.inode);
-            stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-
-            let mut input = Vec::new();
-            input.push(
-                kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-            );
-
-            for p in fs::walk_dir(&path).unwrap() {
-                debug!(" - adding sub '{}' ...", p.display());
-
-                let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
-                let fd = handler.fd;
-                let stat = p.stat().unwrap();
-
-                fds.insert(fd, handler);
-                nodes.insert(fd, stat.unstable.inode);
-                stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
-
-                input.push(
-                    kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
-                );
-            }
-
-            let mut output: [kevent, ..0] = [];
-            let n = queue.process(input.as_slice(), &mut output, &None);
-            // TODO: Analyze result.
-            debug!("Adding {} descriptors: {}", input.len(), n);
-        }
-    }
-
     fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
         for (inode, stat) in curr.iter() {
             if !prev.contains_key(inode) {
@@ -304,14 +308,14 @@ impl Watcher {
         }
     }
 
-    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-        for (inode, stat) in prev.iter() {
-            if !curr.contains_key(inode) {
-                debug!(" <- Remove: {}", stat.path.display());
-                tx.send(Remove(stat.path.clone()));
-            }
-        }
-    }
+//    fn removed(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
+//        for (inode, stat) in prev.iter() {
+//            if !curr.contains_key(inode) {
+//                debug!(" <- Remove: {}", stat.path.display());
+//                tx.send(Remove(stat.path.clone()));
+//            }
+//        }
+//    }
 
 //    fn modified(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
 //        for (inode, stat) in curr.iter() {
@@ -629,6 +633,9 @@ mod watcher {
 
     #[test]
     fn watch_file_rename_file() {
+        /*
+         * We expect Remove event, because there are no directory watched.
+         */
         let tmp = TempDir::new("watch_file_rename_file").unwrap();
         let path = tmp.path().join("file.log");
         File::create(&path).unwrap();
@@ -641,11 +648,10 @@ mod watcher {
         fs::rename(&path, &tmp.path().join("file-new.log")).unwrap();
 
         match watcher.rx.recv() {
-            Rename(old, new) => {
+            Remove(old) => {
                 assert_eq!(b"file.log", old.filename().unwrap())
-                assert_eq!(b"file-new.log", new.filename().unwrap())
             }
-            _ => { fail!("Expected `Rename` event") }
+            _ => { fail!("Expected `Remove` event") }
         }
     }
 
@@ -696,7 +702,13 @@ mod watcher {
 
     #[test]
     fn watch_dir_rename_single_file() {
-        let tmp = TempDir::new("watch_dir_rename_single_file").unwrap();
+        use std::os;
+        use std::io::fs;
+
+        let tmp = TempDir::new_in(
+            &os::make_absolute(&Path::new(".")),
+            "watch_dir_rename_single_file"
+        ).unwrap();
         let oldpath = tmp.path().join("file-old.log");
         let newpath = tmp.path().join("file-new.log");
 
@@ -713,6 +725,8 @@ mod watcher {
 
         match watcher.rx.recv() {
             Rename(old, new) => {
+                assert!(oldpath == os::make_absolute(&old));
+                assert!(newpath == os::make_absolute(&new));
                 assert_eq!(b"file-old.log", old.filename().unwrap());
                 assert_eq!(b"file-new.log", new.filename().unwrap());
             }
