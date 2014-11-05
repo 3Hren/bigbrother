@@ -316,6 +316,7 @@ impl Internal {
 
                         Watcher::created(&self.stats, &curr, &self.tx);
                         // TODO: Save new stats.
+                        // TODO: Register new paths.
                     }
                     x => {
                         debug!("Received unintresting {} event - ignoring", x);
@@ -326,16 +327,7 @@ impl Internal {
                 warn!("Received event from non-file descriptor - ignoring");
             }
             // TODO: Write - new file has been created (or any action with files within directory?)
-            //   Scan for new files
-            //   Allocate events list
-            //   An fd contains in `watched` map?
-            //     + > nop
-            //     - > add to `watched` & add to events list
-            //       tx.send Create
-            //   Process events list.
-
-            // TODO: Remove
-            //   Maybe do nothing with paths, because all files should be evented?
+            // TODO: Remove. Maybe do nothing with paths, because all files should be evented?
             // TODO: Rename
             // TODO: ModifyAttr
         }
