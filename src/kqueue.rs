@@ -530,8 +530,6 @@ mod kqueue {
         let mut output: [kevent, ..0] = [];
 
         let n = queue.process(&input, &mut output, &None);
-        error!("{} {}", n, os::error_string(os::errno() as uint));
-
         assert_eq!(0, n);
 
         timer::sleep(Duration::milliseconds(50));
