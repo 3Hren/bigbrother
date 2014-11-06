@@ -1,10 +1,10 @@
 #![allow(non_camel_case_types, non_upper_case_globals)] // C types
 
 use std::collections::{HashSet, HashMap};
-use std::os;
 use std::io::{FileStat, FileType, TypeFile, TypeDirectory};
 use std::io::fs;
 use std::io::fs::PathExtensions;
+use std::os;
 use std::ptr;
 
 use sync::comm::{Empty, Disconnected};
@@ -112,8 +112,11 @@ impl Watcher {
 
     fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
         debug!("Starting watcher thread ...");
-        let mut d = Internal::new(tx.clone());
 
+        let mut d = Internal::new(tx);
+
+        let input = [];
+        let mut output: [kevent, ..8] = [kevent::invalid(), ..8];
         let timeout = Timespec::new(0, 100000000i32);
 
         loop {
@@ -139,12 +142,15 @@ impl Watcher {
                 Err(Disconnected) => { break }
             }
 
-            let input = [];
-            let mut output: [kevent, ..1] = [kevent::invalid()];
-            let n = queue.process(&input, &mut output, &Some(timeout)) as uint;
+            let n = queue.process(&input, &mut output, &Some(timeout));
+
+            if n == -1 {
+                warn!("Failed to process kernel events: [{}] {}", os::errno(), os::error_string(os::errno() as uint));
+                break;
+            }
 
             debug!("Processing {} event{} ...", n, if n > 1 {"s"} else {""});
-            for ev in output[..n].iter() {
+            for ev in output[..n as uint].iter() {
                 d.process(ev);
             }
         }
