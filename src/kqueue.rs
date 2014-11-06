@@ -277,7 +277,7 @@ impl Internal {
                         self.tx.send(Remove(path));
                     }
                     x if x.intersects(NOTE_RENAME) => {
-                        let newpath = getpath(fd);
+                        let newpath = path_from_fd(fd).unwrap();
                         let dirinode = newpath.dir_path().stat().unwrap().unstable.inode;
 
                         if !self.inodes.contains(&dirinode) {
@@ -339,17 +339,35 @@ impl Internal {
     }
 }
 
-fn getpath(fd: i32) -> Path {
-    use std::c_str::CString;
-    let path = [0i8, ..1024];
-    unsafe {
-        let res = fcntl(fd, 50, path.as_ptr()); // TODO: Magic.
-        assert_eq!(0, res);
+#[deriving(Show)]
+pub struct SystemError(uint, String);
+
+impl SystemError {
+    fn last() -> SystemError {
+        let errno = os::errno() as uint;
+        SystemError(errno, os::error_string(errno))
     }
-    let s = unsafe {
-        CString::new(path.as_ptr(), false)
+}
+
+static F_GETPATH: i32 = 50;
+
+fn path_from_fd(fd: i32) -> Result<Path, SystemError> {
+    use std::c_str::CString;
+
+    let buffer = [0i8, ..1024];
+
+    let res = unsafe {
+        fcntl(fd, F_GETPATH, buffer.as_ptr())
     };
-    Path::new(s)
+
+    if res == -1 {
+        return Err(SystemError::last())
+    }
+
+    let wrap = unsafe {
+        CString::new(buffer.as_ptr(), false)
+    };
+    Ok(Path::new(wrap))
 }
 
 bitflags! {
