@@ -161,15 +161,6 @@ impl Watcher {
         }
 
         debug!("Watcher thread has been stopped");
-    }
-
-    fn created(prev: &FileStatMap, curr: &FileStatMap, tx: &Sender<Event>) {
-        for (inode, stat) in curr.iter() {
-            if !prev.contains_key(inode) {
-                debug!(" <- Create: {}", stat.path.display());
-                tx.send(Create(stat.path.clone()));
-            }
-        }
         exit.lock().cond.signal();
     }
 }
@@ -187,10 +178,9 @@ struct Internal {
     tx: Sender<Event>,
 
     fds: HashMap<i32, FileHandler>, // RAII wrapper for fd, which closes it when out of scope.
-    paths: HashMap<i32, Path>,
-    nodes: HashMap<i32, u64>,
-    stats: FileStatMap,
-    dirs: HashSet<Path>,
+    paths: HashMap<i32, WatchedFileStat>, // fd -> (inode, FileType, Path)
+    inodes: HashSet<u64>,
+    stats: HashMap<u64, HashMap<u64, Path>>, // inode -> inode -> Path
 }
 
 impl Internal {
@@ -198,10 +188,9 @@ impl Internal {
         Internal {
             tx: tx,
             fds:   HashMap::new(),
-            paths: HashMap::new(),
-            nodes: HashMap::new(),
-            stats: HashMap::new(),
-            dirs:  HashSet::new(),
+            paths : HashMap::new(),
+            inodes: HashSet::new(),
+            stats : HashMap::new(),
         }
     }
 
@@ -215,65 +204,53 @@ impl Internal {
 
         if path.is_file() {
             self.fds.insert(fd, handler);
-            self.paths.insert(fd, path.clone());
-            self.nodes.insert(fd, stat.unstable.inode);
-            self.stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
+            self.paths.insert(fd, WatchedFileStat::new(path.clone(), &stat));
+            self.inodes.insert(stat.unstable.inode);
 
             input.push(
                 kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
             );
         } else if path.is_dir() {
             self.fds.insert(fd, handler);
-            self.paths.insert(fd, path.clone());
-            self.nodes.insert(fd, stat.unstable.inode);
-            self.stats.insert(stat.unstable.inode, WatchedFileStat::new(path.clone(), &stat));
-            self.dirs.insert(os::make_absolute(&path));
+            self.paths.insert(fd, WatchedFileStat::new(path.clone(), &stat));
+            self.inodes.insert(stat.unstable.inode);
 
             input.push(
                 kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
             );
 
-            for p in fs::walk_dir(&path).unwrap() {
-                debug!(" - adding sub '{}' ...", p.display());
+            let mut curr = HashMap::new();
 
-                let handler = FileHandler::new(&p).unwrap(); // TODO: Unsafe.
+            for path in fs::walk_dir(&path).unwrap() {
+                debug!(" - adding sub '{}' ...", path.display());
+
+                let handler = FileHandler::new(&path).unwrap(); // TODO: Unsafe.
                 let fd = handler.fd;
-                let stat = p.stat().unwrap();
+                let stat = path.stat().unwrap();
 
                 self.fds.insert(fd, handler);
-                self.paths.insert(fd, p.clone());
-                self.nodes.insert(fd, stat.unstable.inode);
-                self.stats.insert(stat.unstable.inode, WatchedFileStat::new(p.clone(), &stat));
+                self.paths.insert(fd, WatchedFileStat::new(path.clone(), &stat));
+                self.inodes.insert(stat.unstable.inode);
+
+                curr.insert(stat.unstable.inode, path.clone());
 
                 input.push(
                     kevent::new(fd as u64, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_DELETE | NOTE_WRITE | NOTE_RENAME)
                 );
             }
+            self.stats.insert(stat.unstable.inode, curr);
         }
 
         input
     }
 
     fn process(&mut self, ev: &kevent) {
-        debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={}, udata={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data, ev.udata);
+        debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data);
         let fd = ev.ident as i32;
-        let stat = match self.nodes.find(&fd) {
-            Some(inode) => match self.stats.find_copy(inode) {
-                Some(v) => v,
-                None => {
-                    warn!("Received unregistered event on {} inode - ignoring", inode);
-                    return;
-                }
-            },
+        let stat = match self.paths.find_copy(&fd) {
+            Some(v) => v,
             None => {
                 warn!("Received unregistered event on {} fd - ignoring", ev.ident);
-                return;
-            }
-        };
-
-        let path = match self.paths.find(&fd) {
-            Some(p) => p.clone(),
-            None => {
                 return;
             }
         };
@@ -282,6 +259,9 @@ impl Internal {
             warn!("Received non vnode event - ignoring");
             return;
         }
+
+        let path = stat.path;
+        let inode = stat.inode;
 
         match stat.kind {
             ClonableFileType(TypeFile) => {
@@ -294,19 +274,19 @@ impl Internal {
                     x if x.intersects(NOTE_DELETE) => {
                         debug!(" <- Remove: {}", path.display());
                         self.fds.remove(&fd);
-                        self.nodes.remove(&fd);
                         self.tx.send(Remove(path));
                     }
                     x if x.intersects(NOTE_RENAME) => {
-                        let new = getpath(fd);
-                        error!("NEWPATH {}", new.dir_path().display());
-                        if !self.dirs.contains(&new.dir_path()) {
+                        let newpath = getpath(fd);
+                        let dirinode = newpath.dir_path().stat().unwrap().unstable.inode;
+
+                        if !self.inodes.contains(&dirinode) {
                             debug!(" <- Remove: {}", path.display());
                             self.tx.send(Remove(path));
                         } else {
-                            debug!(" <- Rename: {} -> {}", path.display(), new.display());
+                            debug!(" <- Rename: {} -> {}", path.display(), newpath.display());
                             // TODO: Update new info.
-                            self.tx.send(Rename(path, new));
+                            self.tx.send(Rename(path, newpath));
                         }
                     }
                     // TODO: ModifyAttr
@@ -321,14 +301,26 @@ impl Internal {
                         debug!("Directory {} has changed - scanning ...", path.display());
                         let mut curr = HashMap::new();
 
-                        for path in fs::walk_dir(&path).unwrap().filter(|path| path.is_file()) {
+                        for path in fs::walk_dir(&path).unwrap() {
                             let stat = path.stat().unwrap();
-                            debug!("Found {}, {}", path.display(), stat.modified);
-                            curr.insert(stat.unstable.inode, WatchedFileStat::new(path, &stat));
+                            curr.insert(stat.unstable.inode, path);
                         }
 
-                        Watcher::created(&self.stats, &curr, &self.tx);
-                        // TODO: Save new stats.
+                        {
+                            let prev = match self.stats.find(&inode) {
+                                Some(v) => v,
+                                None    => {debug!("2"); return; }
+                            };
+
+                            for (inode, path) in curr.iter() {
+                                if !prev.contains_key(inode) && !self.inodes.contains(inode) {
+                                    debug!(" <- Create: {}", path.display());
+                                    self.inodes.insert(*inode);
+                                    self.tx.send(Create(path.clone()));
+                                }
+                            }
+                        }
+                        self.stats.insert(inode, curr);
                         // TODO: Register new paths.
                     }
                     x => {
@@ -878,7 +870,7 @@ mod watcher {
         watcher.watch(tmp1.path().clone());
         watcher.watch(tmp2.path().clone());
 
-        timer::sleep(Duration::milliseconds(50));
+        timer::sleep(Duration::milliseconds(200));
 
         fs::rename(&oldpath, &newpath).unwrap();
 
