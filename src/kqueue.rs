@@ -7,6 +7,7 @@ use std::io::fs::PathExtensions;
 use std::os;
 use std::ptr;
 
+use sync::{Mutex, Arc};
 use sync::comm::{Empty, Disconnected};
 
 use libc::{c_void, c_int, uintptr_t, intptr_t, timespec, time_t, c_long};
@@ -85,6 +86,7 @@ type FileStatMap = HashMap<u64, WatchedFileStat>;
 pub struct Watcher {
     pub rx: Receiver<Event>,
     txc: Sender<Control>,
+    exit: Arc<Mutex<()>>,
 }
 
 impl Watcher {
@@ -96,12 +98,17 @@ impl Watcher {
 
         let (tx, rx) = channel();
         let (txc, rxc) = channel();
-        spawn(proc() Watcher::run(queue, tx, rxc));
+        let exit = Arc::new(Mutex::new(()));
 
-        Watcher {
+        let watcher = Watcher {
             rx: rx,
             txc: txc,
-        }
+            exit: exit.clone(),
+        };
+
+        spawn(proc() Watcher::run(queue, tx, rxc, exit));
+
+        watcher
     }
 
     pub fn watch(&mut self, path: Path) {
@@ -110,7 +117,7 @@ impl Watcher {
         self.txc.send(Add(path));
     }
 
-    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>) {
+    fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>, exit: Arc<Mutex<()>>) {
         debug!("Starting watcher thread ...");
 
         let mut d = Internal::new(tx);
@@ -133,9 +140,7 @@ impl Watcher {
                             // TODO: Analyze result.
                             debug!("Adding {} descriptors: {}", input.len(), n);
                         }
-                        Exit => {
-                            break
-                        }
+                        Exit => { break }
                     }
                 }
                 Err(Empty) => {}
@@ -165,6 +170,7 @@ impl Watcher {
                 tx.send(Create(stat.path.clone()));
             }
         }
+        exit.lock().cond.signal();
     }
 }
 
@@ -173,7 +179,7 @@ impl Drop for Watcher {
         debug!("Dropping the watcher");
 
         self.txc.send(Exit);
-        // TODO: Wait here till watcher is completely stopped.
+        self.exit.lock().cond.wait();
     }
 }
 
