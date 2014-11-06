@@ -173,6 +173,7 @@ impl Drop for Watcher {
         debug!("Dropping the watcher");
 
         self.txc.send(Exit);
+        // TODO: Wait here till watcher is completely stopped.
     }
 }
 
