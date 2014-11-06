@@ -160,8 +160,8 @@ impl Watcher {
             }
         }
 
-        debug!("Watcher thread has been stopped");
         exit.lock().cond.signal();
+        debug!("Watcher thread has been stopped");
     }
 }
 
