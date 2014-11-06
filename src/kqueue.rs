@@ -9,7 +9,7 @@ use std::ptr;
 
 use sync::comm::{Empty, Disconnected};
 
-use libc::{c_void, c_int, uintptr_t, intptr_t};
+use libc::{c_void, c_int, uintptr_t, intptr_t, timespec, time_t, c_long};
 
 use time::Timespec;
 
@@ -477,11 +477,21 @@ impl KQueue {
     }
 
     fn process(&mut self, input: &[kevent], output: &mut[kevent], timeout: &Option<Timespec>) -> i32 {
-        unsafe {
-            match *timeout {
-                Some(ref v) => kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, v),
-                None        => kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, ptr::null::<Timespec>()),
+        let timeout = match *timeout {
+            Some(value) => {
+                let timeout = timespec {
+                    tv_sec: value.sec as time_t,
+                    tv_nsec: value.nsec as c_long,
+                };
+                &timeout as *const timespec
             }
+            None => {
+                ptr::null::<timespec>()
+            }
+        };
+
+        unsafe {
+            kevent(self.fd, input.as_ptr(), input.len() as i32, output.as_ptr(), output.len() as i32, timeout)
         }
     }
 }
@@ -496,7 +506,7 @@ impl Drop for KQueue {
 
 extern {
     fn kqueue() -> c_int;
-    fn kevent(kq: c_int, changelist: *const kevent, nchanges: c_int, eventlist: *const kevent, nevents: c_int, timeout: *const Timespec) -> c_int;
+    fn kevent(kq: c_int, changelist: *const kevent, nchanges: c_int, eventlist: *const kevent, nevents: c_int, timeout: *const timespec) -> c_int;
 
     fn open(path: *const i8, flags: c_int) -> c_int;
     fn close(fd: c_int);
