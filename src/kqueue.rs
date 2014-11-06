@@ -565,15 +565,13 @@ mod watcher {
 
     use super::super::{Watcher, Create, Modify, Rename, Remove};
 
-//    #[test] watch dir create file
-//    #[test] watch dir remove file
 //    #[test] watch dir rename file inplace
 //    #[test] watch dir rename file to unwatched
 //    #[test] watch dir rename file from unwatched
-//    #[test] watch dir create file, touch other (prevent already events)
+//    #[test] watch dir create file, touch other (prevent already emitted events)
 //    #[test] watch dir create file create file
 //    #[test] watch dir rename dir
-//    #[test] watch dir rename dir
+//    #[test] watch dir remove dir
 
     /// Test single watched file modifying.
     /*
