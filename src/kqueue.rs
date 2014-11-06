@@ -173,7 +173,7 @@ impl Drop for Watcher {
 struct Internal {
     tx: Sender<Event>,
 
-    fds: HashMap<i32, FileHandler>,
+    fds: HashMap<i32, FileHandler>, // RAII wrapper for fd, which closes it when out of scope.
     paths: HashMap<i32, Path>,
     nodes: HashMap<i32, u64>,
     stats: FileStatMap,
@@ -575,13 +575,13 @@ mod watcher {
 //    #[test] watch dir rename dir
 //    #[test] watch dir rename dir
 
+    /// Test single watched file modifying.
+    /*
+     * We create temporary directory with single file and register file with the watcher.
+     * After writing some bytes we expect Modify event to be received.
+     */
     #[test]
     fn watch_file_modify_file() {
-        /*
-         * We create temporary directory with single file and register it with
-         * the watcher.
-         * After writing some bytes we expect Modify event to be received.
-         */
         let tmp = TempDir::new("watch_file_modify_file").unwrap();
         let path = tmp.path().join("file.log");
         let mut file = File::create(&path).unwrap();
@@ -596,13 +596,18 @@ mod watcher {
         file.fsync().unwrap();
 
         match watcher.rx.recv() {
-            Modify(p) => {
-                assert_eq!(b"file.log", p.filename().unwrap())
+            Modify(actual) => {
+                assert!(path == actual)
             }
             _ => { panic!("Expected `Modify` event") }
         }
     }
 
+    /// Test single watched file removing.
+    /*
+     * We create temporary directory with single file and register file with the watcher.
+     * Then we remove the file and expect Remove event to be received.
+     */
     #[test]
     fn watch_file_remove_file() {
         let tmp = TempDir::new("watch_file_remove_file").unwrap();
@@ -617,18 +622,22 @@ mod watcher {
         fs::unlink(&path).unwrap();
 
         match watcher.rx.recv() {
-            Remove(p) => {
-                assert_eq!(b"file.log", p.filename().unwrap())
+            Remove(actual) => {
+                assert!(path == actual)
             }
             _ => { panic!("Expected `Remove` event") }
         }
     }
 
+    /// Test single watched file renaming.
+    /*
+     * We create temporary directory with single file and register file with the watcher.
+     * After giving it some new name (in the same directory) we expect Remove event to be received,
+     * because that file is no longer watched by the watcher. To receive Rename event we must
+     * register the directory itself with the watcher.
+     */
     #[test]
     fn watch_file_rename_file() {
-        /*
-         * We expect Remove event, because there are no directory watched.
-         */
         let tmp = TempDir::new("watch_file_rename_file").unwrap();
         let path = tmp.path().join("file.log");
         File::create(&path).unwrap();
@@ -642,12 +651,19 @@ mod watcher {
 
         match watcher.rx.recv() {
             Remove(old) => {
-                assert_eq!(b"file.log", old.filename().unwrap())
+                assert!(old == path)
             }
             _ => { panic!("Expected `Remove` event") }
         }
     }
 
+    /// TODO: Test single watched file attribute modifying.
+
+    /// Test file creation in single registered directory.
+    /*
+     * We create empty temporary directory and register it with the watcher.
+     * After file creation we expect Create event to be received.
+     */
     #[test]
     fn watch_dir_create_single_file() {
         let tmp = TempDir::new("watch_dir_create_single_file").unwrap();
@@ -661,13 +677,20 @@ mod watcher {
         File::create(&path).unwrap();
 
         match watcher.rx.recv() {
-            Create(p) => {
-                assert_eq!(b"file.log", p.filename().unwrap())
+            Create(actual) => {
+                assert!(path == actual)
             }
             _ => { panic!("Expected `Create` event") }
         }
     }
 
+    /// TODO: Test file modifying in single registered directory.
+
+    /// Test file removing in single registered directory.
+    /*
+     * We create temporary directory with single file and register it with the watcher.
+     * After removing the file we expect Remove event to be received.
+     */
     #[test]
     fn watch_dir_remove_single_file() {
         let tmp = TempDir::new("watch_dir_remove_single_file").unwrap();
@@ -686,8 +709,8 @@ mod watcher {
         fs::unlink(&path).unwrap();
 
         match watcher.rx.recv() {
-            Remove(p) => {
-                assert_eq!(b"file.log", p.filename().unwrap())
+            Remove(actual) => {
+                assert!(path == actual)
             }
             _  => { panic!("Expected `Remove` event") }
         }
