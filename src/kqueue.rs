@@ -124,7 +124,7 @@ impl Watcher {
 
         let input = [];
         let mut output: [kevent, ..8] = [kevent::invalid(), ..8];
-        let timeout = Timespec::new(0, 100000000i32);
+        let timeout = Timespec::new(0, 100_000_000i32);
 
         loop {
             debug!("Performing watcher loop iteration ...");
