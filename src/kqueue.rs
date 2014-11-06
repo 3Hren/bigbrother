@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types, non_uppercase_statics)] // C types
+#![allow(non_camel_case_types, non_upper_case_globals)] // C types
 
 use std::collections::{HashSet, HashMap};
 use std::os;
@@ -91,7 +91,7 @@ impl Watcher {
     pub fn new() -> Watcher {
         let queue = match KQueue::new() {
             Ok(queue) => queue,
-            Err(err)  => fail!(err)
+            Err(err)  => panic!(err)
         };
 
         let (tx, rx) = channel();
@@ -423,7 +423,7 @@ impl FileHandler {
         let pathstr = match path.as_str() {
             Some(v) => v,
             None => {
-                fail!("Failed to convert {} path to string", path.display());
+                panic!("Failed to convert {} path to string", path.display());
             }
         };
 
@@ -599,7 +599,7 @@ mod watcher {
             Modify(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _ => { fail!("Expected `Modify` event") }
+            _ => { panic!("Expected `Modify` event") }
         }
     }
 
@@ -620,7 +620,7 @@ mod watcher {
             Remove(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _ => { fail!("Expected `Remove` event") }
+            _ => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -644,7 +644,7 @@ mod watcher {
             Remove(old) => {
                 assert_eq!(b"file.log", old.filename().unwrap())
             }
-            _ => { fail!("Expected `Remove` event") }
+            _ => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -664,7 +664,7 @@ mod watcher {
             Create(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _ => { fail!("Expected `Create` event") }
+            _ => { panic!("Expected `Create` event") }
         }
     }
 
@@ -689,7 +689,7 @@ mod watcher {
             Remove(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _  => { fail!("Expected `Remove` event") }
+            _  => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -720,7 +720,7 @@ mod watcher {
                 assert_eq!(b"file-old.log", old.filename().unwrap());
                 assert_eq!(b"file-new.log", new.filename().unwrap());
             }
-            _ => { fail!("Expected `Rename` event") }
+            _ => { panic!("Expected `Rename` event") }
         }
     }
 
@@ -754,7 +754,7 @@ mod watcher {
                 Create(p) => {
                     assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
                 }
-                _ => { fail!("Expected `Create` event") }
+                _ => { panic!("Expected `Create` event") }
             }
 
             counter -= 1;
@@ -785,7 +785,7 @@ mod watcher {
             Create(p) => {
                 assert_eq!(b"file-new.log", p.filename().unwrap());
             }
-            _ => { fail!("Expected `Create` event") }
+            _ => { panic!("Expected `Create` event") }
         }
     }
 
@@ -812,7 +812,7 @@ mod watcher {
             Remove(p) => {
                 assert_eq!(b"file-old.log", p.filename().unwrap());
             }
-            _ => { fail!("Expected `Remove` event") }
+            _ => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -843,7 +843,7 @@ mod watcher {
                 assert!(oldpath == os::make_absolute(&old));
                 assert!(newpath == os::make_absolute(&new));
             }
-            _ => { fail!("Expected `Rename` event") }
+            _ => { panic!("Expected `Rename` event") }
         }
     }
 } // mod watcher

@@ -235,7 +235,7 @@ mod test {
             Create(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _ => { fail!("Expected `Create` event") }
+            _ => { panic!("Expected `Create` event") }
         }
     }
 
@@ -260,7 +260,7 @@ mod test {
             Remove(p) => {
                 assert_eq!(b"file.log", p.filename().unwrap())
             }
-            _  => { fail!("Expected `Remove` event") }
+            _  => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -286,7 +286,7 @@ mod test {
                 assert_eq!(b"file-old.log", old.filename().unwrap());
                 assert_eq!(b"file-new.log", new.filename().unwrap());
             }
-            _ => { fail!("Expected `Rename` event") }
+            _ => { panic!("Expected `Rename` event") }
         }
     }
 
@@ -344,7 +344,7 @@ mod test {
                 Create(p) => {
                     assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
                 }
-                _ => { fail!("Expected `Create` event") }
+                _ => { panic!("Expected `Create` event") }
             }
             counter -= 1;
         }
@@ -374,7 +374,7 @@ mod test {
             Create(p) => {
                 assert_eq!(b"file-new.log", p.filename().unwrap());
             }
-            _ => { fail!("Expected `Create` event") }
+            _ => { panic!("Expected `Create` event") }
         }
     }
 
@@ -401,7 +401,7 @@ mod test {
             Remove(p) => {
                 assert_eq!(b"file-old.log", p.filename().unwrap());
             }
-            _ => { fail!("Expected `Remove` event") }
+            _ => { panic!("Expected `Remove` event") }
         }
     }
 
@@ -430,7 +430,7 @@ mod test {
                 assert_eq!(b"file-old.log", old.filename().unwrap());
                 assert_eq!(b"file-new.log", new.filename().unwrap());
             }
-            _ => { fail!("Expected `Rename` event") }
+            _ => { panic!("Expected `Rename` event") }
         }
     }
 }
