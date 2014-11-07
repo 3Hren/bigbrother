@@ -747,6 +747,12 @@ mod watcher {
         }
     }
 
+    /// Test file renaming in single registered directory.
+    /*
+     * We create temporary directory with single file and register it with the watcher.
+     * After renaming the file with some name in the same directory we expect Rename event to be
+     * received, because the destination name is always in watched directory.
+     */
     #[test]
     fn watch_dir_rename_single_file() {
         use std::os;
@@ -771,13 +777,17 @@ mod watcher {
             Rename(old, new) => {
                 assert!(oldpath == os::make_absolute(&old));
                 assert!(newpath == os::make_absolute(&new));
-                assert_eq!(b"file-old.log", old.filename().unwrap());
-                assert_eq!(b"file-new.log", new.filename().unwrap());
             }
             _ => { panic!("Expected `Rename` event") }
         }
     }
 
+    /// Test two files creation in two registered directories.
+    /*
+     * We create two temporary empty directories and register them with the watcher.
+     * After that we wait a bit and then create single file in each directory. An Create event is
+     * expected to be received.
+     */
     #[test]
     fn create_two_files_in_different_directories() {
         use std::str;
@@ -816,9 +826,16 @@ mod watcher {
         assert!(matches.is_empty());
     }
 
+    /// Test file renaming from non-watched directory to the watched one.
+    /*
+     * We create two temporary directories, one of them contains single file, but we register with
+     * the watcher only the second one (empty).
+     * Then we move that file from non-watched directory to watched and expect to receive Create
+     * event. Why Create? Because we don't watch initial directory and for us that renaming event
+     * is equal to file creation.
+     */
     #[test]
     fn rename_file_from_nonwatched_directory_to_watched() {
-        // Event should be considered as file creation in watched directory.
         let tmp1 = TempDir::new("rename-nowatched").unwrap();
         let tmp2 = TempDir::new("rename-towatched").unwrap();
         let oldpath = tmp1.path().join("file-old.log");
@@ -843,9 +860,15 @@ mod watcher {
         }
     }
 
+    /// Test file renaming from watched directory to non-watched one.
+    /*
+     * We create two temporary directories, one of them contains single file, and we register it
+     * with the watcher. The second directory isn't being watched.
+     * Then we move that file from watched directory to non-watched and expect to receive Remove
+     * event.
+     */
     #[test]
     fn rename_file_from_watched_directory_to_nonwatched() {
-        // Event should be considered as file removing in watched directory.
         let tmp1 = TempDir::new("rename-watched").unwrap();
         let tmp2 = TempDir::new("rename-nonwatched").unwrap();
         let oldpath = tmp1.path().join("file-old.log");
@@ -870,6 +893,13 @@ mod watcher {
         }
     }
 
+    /// Test file renaming between two watched directories.
+    /*
+     * We create two temporary directories, one of them contains single file. We register both of
+     * them with the watcher.
+     * Then we move that single file from one directory to another and expect to receive Rename
+     * event.
+     */
     #[test]
     fn rename_file_from_watched_directory_to_watched() {
         use std::os;
