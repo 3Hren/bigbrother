@@ -31,28 +31,10 @@ enum Control {
     Exit,
 }
 
-// Temporary wrapper for FileType, which is non-clonable for some reasons I don't understand.
-struct ClonableFileType(FileType);
-
-impl Clone for ClonableFileType {
-    fn clone(&self) -> ClonableFileType {
-        use std::io::{TypeFile, TypeDirectory, TypeNamedPipe, TypeBlockSpecial, TypeSymlink, TypeUnknown};
-
-        match *self {
-            ClonableFileType(TypeFile)         => ClonableFileType(TypeFile),
-            ClonableFileType(TypeDirectory)    => ClonableFileType(TypeDirectory),
-            ClonableFileType(TypeNamedPipe)    => ClonableFileType(TypeNamedPipe),
-            ClonableFileType(TypeBlockSpecial) => ClonableFileType(TypeBlockSpecial),
-            ClonableFileType(TypeSymlink)      => ClonableFileType(TypeSymlink),
-            ClonableFileType(TypeUnknown)      => ClonableFileType(TypeUnknown),
-        }
-    }
-}
-
 #[deriving(Clone)]
 struct WatchedFileStat {
     path: Path,
-    kind: ClonableFileType,
+    kind: FileType,
 //    size: u64,
 //    perm: FilePermission,
 //    created: u64,
@@ -74,7 +56,7 @@ impl WatchedFileStat {
     fn new(path: Path, stat: &FileStat) -> WatchedFileStat {
         WatchedFileStat {
             path: path,
-            kind: ClonableFileType(stat.kind),
+            kind: stat.kind,
             modified: stat.modified,
             inode: stat.unstable.inode,
         }
@@ -264,7 +246,7 @@ impl Internal {
         let inode = stat.inode;
 
         match stat.kind {
-            ClonableFileType(TypeFile) => {
+            TypeFile => {
                 match ev.fflags {
                     x if x.intersects(NOTE_WRITE) => {
                         debug!(" <- Modify: {}", path.display());
@@ -295,7 +277,7 @@ impl Internal {
                     }
                 }
             }
-            ClonableFileType(TypeDirectory) => {
+            TypeDirectory => {
                 match ev.fflags {
                     x if x.intersects(NOTE_WRITE) => {
                         debug!("Directory {} has changed - scanning ...", path.display());
@@ -307,7 +289,7 @@ impl Internal {
                         }
 
                         {
-                            let prev = match self.stats.find(&inode) {
+                            let prev = match self.stats.get(&inode) {
                                 Some(v) => v,
                                 None    => {debug!("2"); return; }
                             };
