@@ -913,6 +913,25 @@ mod watcher {
             _ => { panic!("Expected `Rename` event") }
         }
     }
+
+//    #[test]
+//    fn manual() {
+//        let path = Path::new("/tmp/bb");
+//        let mut watcher = Watcher::new();
+//        watcher.watch(path);
+
+//        loop {
+//            match watcher.rx.recv() {
+//                Create(path) => warn!("Create: {}", path.display()),
+//                Modify(path) => warn!("Modify: {}", path.display()),
+//                Remove(path) => warn!("Remove: {}", path.display()),
+//                Rename(old, new) => warn!("Rename: {} -> {}", old.display(), new.display()),
+//            }
+//        }
+//    }
+
+    // TODO: Test create, then remove.
+    // TODO: Test create 1, create 2, mv 1 -> 2.
 } // mod watcher
 
 } // mod test
