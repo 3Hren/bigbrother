@@ -3,3 +3,6 @@
 name = "bigbrother"
 version = "0.0.1"
 authors = ["Evgeny Safronov <division494@gmail.com>"]
+
+[dependencies.time]
+git = "https://github.com/rust-lang/time.git"

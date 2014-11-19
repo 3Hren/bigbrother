@@ -96,7 +96,7 @@ impl Watcher {
     pub fn watch(&mut self, path: Path) {
         debug!("Trying to add '{}' to the watcher ...", path.display());
         // TODO: Return EBADF (PathNotExists) if path not exists.
-        self.txc.send(Add(path));
+        self.txc.send(Control::Add(path));
     }
 
     fn run(mut queue: KQueue, tx: Sender<Event>, rxc: Receiver<Control>, exit: Arc<Mutex<()>>) {
@@ -114,7 +114,7 @@ impl Watcher {
             match rxc.try_recv() {
                 Ok(value) => {
                     match value {
-                        Add(path) => {
+                        Control::Add(path) => {
                             debug!("Trying to register '{}' with kqueue...", path.display());
                             let input = d.add(path);
                             let mut output: [kevent, ..0] = [];
@@ -122,7 +122,7 @@ impl Watcher {
                             // TODO: Analyze result.
                             debug!("Adding {} descriptors: {}", input.len(), n);
                         }
-                        Exit => { break }
+                        Control::Exit => { break }
                     }
                 }
                 Err(Empty) => {}
@@ -151,7 +151,7 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         debug!("Dropping the watcher");
 
-        self.txc.send(Exit);
+        self.txc.send(Control::Exit);
         self.exit.lock().cond.wait();
     }
 }
@@ -229,7 +229,7 @@ impl Internal {
     fn process(&mut self, ev: &kevent) {
         debug!(" - Event(fd={}, filter={}, flags={}, fflags={}, data={})", ev.ident, ev.filter, ev.flags, ev.fflags, ev.data);
         let fd = ev.ident as i32;
-        let stat = match self.paths.find_copy(&fd) {
+        let stat = match self.paths.get(&fd).cloned() {
             Some(v) => v,
             None => {
                 warn!("Received unregistered event on {} fd - ignoring", ev.ident);
@@ -251,12 +251,13 @@ impl Internal {
                     x if x.intersects(NOTE_WRITE) => {
                         debug!(" <- Modify: {}", path.display());
                         // TODO: Seems like I should sync current position with the kevent.
-                        self.tx.send(Modify(path));
+                        self.tx.send(Event::Modify(path));
                     }
                     x if x.intersects(NOTE_DELETE) => {
                         debug!(" <- Remove: {}", path.display());
                         self.fds.remove(&fd);
-                        self.tx.send(Remove(path));
+                        self.paths.remove(&fd);
+                        self.tx.send(Event::Remove(path));
                     }
                     x if x.intersects(NOTE_RENAME) => {
                         let newpath = path_from_fd(fd).unwrap();
@@ -264,11 +265,11 @@ impl Internal {
 
                         if !self.inodes.contains(&dirinode) {
                             debug!(" <- Remove: {}", path.display());
-                            self.tx.send(Remove(path));
+                            self.tx.send(Event::Remove(path));
                         } else {
                             debug!(" <- Rename: {} -> {}", path.display(), newpath.display());
                             // TODO: Update new info.
-                            self.tx.send(Rename(path, newpath));
+                            self.tx.send(Event::Rename(path, newpath));
                         }
                     }
                     // TODO: ModifyAttr
@@ -298,7 +299,7 @@ impl Internal {
                                 if !prev.contains_key(inode) && !self.inodes.contains(inode) {
                                     debug!(" <- Create: {}", path.display());
                                     self.inodes.insert(*inode);
-                                    self.tx.send(Create(path.clone()));
+                                    self.tx.send(Event::Create(path.clone()));
                                 }
                             }
                         }
@@ -464,7 +465,7 @@ impl KQueue {
     fn new() -> Result<KQueue, KQueueError> {
         let fd = unsafe { kqueue() };
         if fd < 0 {
-            return Err(UnableToCreateKQueue)
+            return Err(KQueueError::UnableToCreateKQueue)
         }
 
         let kq = KQueue {
@@ -578,7 +579,7 @@ mod watcher {
     use std::io::timer;
     use std::time::Duration;
 
-    use super::super::{Watcher, Create, Modify, Rename, Remove};
+    use super::super::{Watcher, Event};
 
 //    #[test] watch dir rename file inplace
 //    #[test] watch dir rename file to unwatched
@@ -609,7 +610,7 @@ mod watcher {
         file.fsync().unwrap();
 
         match watcher.rx.recv() {
-            Modify(actual) => {
+            Event::Modify(actual) => {
                 assert!(path == actual)
             }
             _ => { panic!("Expected `Modify` event") }
@@ -635,7 +636,7 @@ mod watcher {
         fs::unlink(&path).unwrap();
 
         match watcher.rx.recv() {
-            Remove(actual) => {
+            Event::Remove(actual) => {
                 assert!(path == actual)
             }
             _ => { panic!("Expected `Remove` event") }
@@ -663,7 +664,7 @@ mod watcher {
         fs::rename(&path, &tmp.path().join("file-new.log")).unwrap();
 
         match watcher.rx.recv() {
-            Remove(old) => {
+            Event::Remove(old) => {
                 assert!(old == path)
             }
             _ => { panic!("Expected `Remove` event") }
@@ -690,7 +691,7 @@ mod watcher {
         File::create(&path).unwrap();
 
         match watcher.rx.recv() {
-            Create(actual) => {
+            Event::Create(actual) => {
                 assert!(path == actual)
             }
             _ => { panic!("Expected `Create` event") }
@@ -722,7 +723,7 @@ mod watcher {
         fs::unlink(&path).unwrap();
 
         match watcher.rx.recv() {
-            Remove(actual) => {
+            Event::Remove(actual) => {
                 assert!(path == actual)
             }
             _  => { panic!("Expected `Remove` event") }
@@ -756,7 +757,7 @@ mod watcher {
         fs::rename(&oldpath, &newpath).unwrap();
 
         match watcher.rx.recv() {
-            Rename(old, new) => {
+            Event::Rename(old, new) => {
                 assert!(oldpath == os::make_absolute(&old));
                 assert!(newpath == os::make_absolute(&new));
             }
@@ -797,7 +798,7 @@ mod watcher {
         let mut counter = 2u8;
         while counter > 0 {
             match watcher.rx.recv() {
-                Create(p) => {
+                Event::Create(p) => {
                     assert!(matches.remove(&String::from_str(str::from_utf8(p.filename().unwrap()).unwrap())));
                 }
                 _ => { panic!("Expected `Create` event") }
@@ -835,7 +836,7 @@ mod watcher {
         fs::rename(&oldpath, &newpath).unwrap();
 
         match watcher.rx.recv() {
-            Create(p) => {
+            Event::Create(p) => {
                 assert_eq!(b"file-new.log", p.filename().unwrap());
             }
             _ => { panic!("Expected `Create` event") }
@@ -868,7 +869,7 @@ mod watcher {
         fs::rename(&oldpath, &newpath).unwrap();
 
         match watcher.rx.recv() {
-            Remove(p) => {
+            Event::Remove(p) => {
                 assert_eq!(b"file-old.log", p.filename().unwrap());
             }
             _ => { panic!("Expected `Remove` event") }
@@ -905,7 +906,7 @@ mod watcher {
         fs::rename(&oldpath, &newpath).unwrap();
 
         match watcher.rx.recv() {
-            Rename(old, new) => {
+            Event::Rename(old, new) => {
                 assert!(oldpath == os::make_absolute(&old));
                 assert!(newpath == os::make_absolute(&new));
             }
